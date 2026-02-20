@@ -69,7 +69,7 @@ class OpenArmFollower(Robot):
             data_bitrate=self.config.can_data_bitrate if self.config.use_can_fd else None,
         )
 
-        if config.side is not None:
+        if config.side is not None and config.side != "None":
             if config.side == "left":
                 config.joint_limits = LEFT_DEFAULT_JOINTS_LIMITS
             elif config.side == "right":
@@ -143,9 +143,6 @@ class OpenArmFollower(Robot):
             cam.connect()
 
         self.configure()
-
-        if self.is_calibrated:
-            self.bus.set_zero_position()
 
         self.bus.enable_torque()
 

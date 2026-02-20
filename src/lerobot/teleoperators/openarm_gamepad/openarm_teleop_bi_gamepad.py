@@ -73,9 +73,10 @@ class OpenArmBiGamepadJointsTeleop(Teleoperator):
     
     def connect(self):
         if sys.platform == "darwin":
-            from lerobot.teleoperators.gamepad.gamepad_utils import GamepadControllerHID as Gamepad
+            from ..gamepad.gamepad_utils import GamepadControllerHID as Gamepad
         else:
-            from lerobot.teleoperators.gamepad.gamepad_utils import GamepadController as Gamepad
+            from ..gamepad.gamepad_utils import GamepadController as Gamepad
+        
         self.gamepad = Gamepad(
             x_step_size=self.config.x_sensitivity,
             y_step_size=self.config.y_sensitivity,

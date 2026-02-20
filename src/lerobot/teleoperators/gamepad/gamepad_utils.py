@@ -194,38 +194,6 @@ class KeyboardController(InputController):
 
         return delta_x, delta_y, delta_z
 
-    def get_all_axes(self):
-            """Get all joystick axes values."""
-            if not self.joystick:
-                return [0.0] * 6
-            
-            axes = []
-            for i in range(self.joystick.get_numaxes()):
-                value = self.joystick.get_axis(i)
-                # Apply deadzone
-                if abs(value) < self.deadzone:
-                    value = 0.0
-                axes.append(value)
-            return axes
-    
-    def get_axis(self, axis_index):
-        """Get a specific axis value."""
-        if not self.joystick or axis_index >= self.joystick.get_numaxes():
-            return 0.0
-        value = self.joystick.get_axis(axis_index)
-        return value if abs(value) >= self.deadzone else 0.0
-    
-    def get_button(self, button_index):
-        """Get a specific button state."""
-        if not self.joystick or button_index >= self.joystick.get_numbuttons():
-            return False
-        return self.joystick.get_button(button_index)
-    
-    def get_hat(self):
-        """Get D-pad state (hat)."""
-        if not self.joystick or self.joystick.get_numhats() == 0:
-            return (0, 0)
-        return self.joystick.get_hat(0)
 
 class GamepadController(InputController):
     """Generate motion deltas from gamepad input."""
@@ -339,7 +307,39 @@ class GamepadController(InputController):
             logging.error("Error reading gamepad. Is it still connected?")
             return 0.0, 0.0, 0.0
 
-
+    def get_all_axes(self):
+            """Get all joystick axes values."""
+            if not self.joystick:
+                return [0.0] * 6
+            
+            axes = []
+            for i in range(self.joystick.get_numaxes()):
+                value = self.joystick.get_axis(i)
+                # Apply deadzone
+                if abs(value) < self.deadzone:
+                    value = 0.0
+                axes.append(value)
+            return axes
+    
+    def get_axis(self, axis_index):
+        """Get a specific axis value."""
+        if not self.joystick or axis_index >= self.joystick.get_numaxes():
+            return 0.0
+        value = self.joystick.get_axis(axis_index)
+        return value if abs(value) >= self.deadzone else 0.0
+    
+    def get_button(self, button_index):
+        """Get a specific button state."""
+        if not self.joystick or button_index >= self.joystick.get_numbuttons():
+            return False
+        return self.joystick.get_button(button_index)
+    
+    def get_hat(self):
+        """Get D-pad state (hat)."""
+        if not self.joystick or self.joystick.get_numhats() == 0:
+            return (0, 0)
+        return self.joystick.get_hat(0)
+    
 class GamepadControllerHID(InputController):
     """Generate motion deltas from gamepad input using HIDAPI."""
 
@@ -490,3 +490,36 @@ class GamepadControllerHID(InputController):
         delta_z = -self.right_y * self.z_step_size  # Up/down
 
         return delta_x, delta_y, delta_z
+
+    def get_all_axes(self):
+            """Get all joystick axes values."""
+            if not self.joystick:
+                return [0.0] * 6
+            
+            axes = []
+            for i in range(self.joystick.get_numaxes()):
+                value = self.joystick.get_axis(i)
+                # Apply deadzone
+                if abs(value) < self.deadzone:
+                    value = 0.0
+                axes.append(value)
+            return axes
+    
+    def get_axis(self, axis_index):
+        """Get a specific axis value."""
+        if not self.joystick or axis_index >= self.joystick.get_numaxes():
+            return 0.0
+        value = self.joystick.get_axis(axis_index)
+        return value if abs(value) >= self.deadzone else 0.0
+    
+    def get_button(self, button_index):
+        """Get a specific button state."""
+        if not self.joystick or button_index >= self.joystick.get_numbuttons():
+            return False
+        return self.joystick.get_button(button_index)
+    
+    def get_hat(self):
+        """Get D-pad state (hat)."""
+        if not self.joystick or self.joystick.get_numhats() == 0:
+            return (0, 0)
+        return self.joystick.get_hat(0)

@@ -240,8 +240,12 @@ class OpenArmGamepadJointsTeleop(Teleoperator):
         action_dict = {}
         for i in range(self.num_joints - 1):
             action_dict[f"joint_{i+1}.pos"] = float(self.current_joint_positions[i])
+            action_dict[f"joint_{i+1}.vel"] = 0.0  # Velocity (zero for position control)
+            action_dict[f"joint_{i+1}.torque"] = 0.0  # Torque (not used in position control)
         action_dict["gripper.pos"] = float(self.current_joint_positions[-1])
-        
+        action_dict["gripper.vel"] = 0.0  # Gripper velocity
+        action_dict["gripper.torque"] = 0.0  # Gripper torque
+
         return action_dict
         
     def send_feedback(self, feedback):

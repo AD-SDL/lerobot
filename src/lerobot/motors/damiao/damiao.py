@@ -257,10 +257,18 @@ class DamiaoMotorsBus(MotorsBusBase):
 
         if disable_torque:
             try:
-                self.disable_torque()
+                # Send disable command multiple times for reliability
+                # This is necessary because:
+                # 1. CAN messages can be dropped
+                # 2. Motors (especially grippers) may be in transitional states
+                # 3. Ensures safety-critical disable succeeds
+                for attempt in range(3):
+                    self.disable_torque()
+                    if attempt < 2:  # No delay after last attempt
+                        time.sleep(0.05)
             except Exception as e:
                 logger.warning(f"Failed to disable torque during disconnect: {e}")
-
+        
         if self.canbus:
             self.canbus.shutdown()
             self.canbus = None

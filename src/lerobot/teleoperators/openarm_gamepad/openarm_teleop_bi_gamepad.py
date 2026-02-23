@@ -296,20 +296,26 @@ class OpenArmBiGamepadJointsTeleop(Teleoperator):
         for i in range(7):
             new_pos = current_positions[i] + joint_velocities[i]
             
-            if i == 0:
-                min_limit, max_limit = -75.0, 75.0
+            if i == 0:  # J1 - different limits for left vs right
+                if self.active_arm == "left":
+                    min_limit, max_limit = -120.0, 90.0
+                else:  # right arm
+                    min_limit, max_limit = -90.0, 120.0
             elif i == 1:
-                min_limit, max_limit = -90.0, 90.0
+                if self.active_arm == "left":
+                    min_limit, max_limit = -90.0, 10.0
+                else:  # right arm
+                    min_limit, max_limit = -10.0, 90.0            
             elif i == 2:
-                min_limit, max_limit = -85.0, 85.0
+                min_limit, max_limit = -90.0, 90.0
             elif i == 3:
                 min_limit, max_limit = 0.0, 135.0
             elif i == 4:
-                min_limit, max_limit = -85.0, 85.0
+                min_limit, max_limit = -90.0, 90.0
             elif i == 5:
                 min_limit, max_limit = -40.0, 40.0
             elif i == 6:
-                min_limit, max_limit = -80.0, 80.0
+                min_limit, max_limit = -90.0, 90.0
             else:
                 min_limit, max_limit = -90.0, 90.0
             

@@ -21,24 +21,24 @@ from lerobot.cameras import CameraConfig
 from ..config import RobotConfig
 
 LEFT_DEFAULT_JOINTS_LIMITS: dict[str, tuple[float, float]] = {
-    "joint_1": (-75.0, 75.0),
-    "joint_2": (-90.0, 90.0),
-    "joint_3": (-85.0, 85.0),
+    "joint_1": (-120.0, 90.0),
+    "joint_2": (-90.0, 10.0),
+    "joint_3": (-90.0, 90.0),
     "joint_4": (0.0, 135.0),
-    "joint_5": (-85.0, 85.0),
+    "joint_5": (-90.0, 90.0),
     "joint_6": (-40.0, 40.0),
-    "joint_7": (-80.0, 80.0),
+    "joint_7": (-90.0, 90.0),
     "gripper": (-65.0, 0.0),
 }
 
 RIGHT_DEFAULT_JOINTS_LIMITS: dict[str, tuple[float, float]] = {
-    "joint_1": (-75.0, 75.0),
-    "joint_2": (-90.0, 90.0),
-    "joint_3": (-85.0, 85.0),
+    "joint_1": (-90.0, 120.0),
+    "joint_2": (-10.0, 90.0),
+    "joint_3": (-90.0, 90.0),
     "joint_4": (0.0, 135.0),
-    "joint_5": (-85.0, 85.0),
+    "joint_5": (-90.0, 90.0),
     "joint_6": (-40.0, 40.0),
-    "joint_7": (-80.0, 80.0),
+    "joint_7": (-90.0, 90.0),
     "gripper": (-65.0, 0.0),
 }
 
@@ -115,6 +115,13 @@ class OpenArmFollowerConfigBase:
         }
     )
 
+    def __post_init__(self):
+        """Apply side-specific joint limits if side is specified."""
+        if self.side == "left":
+            self.joint_limits = LEFT_DEFAULT_JOINTS_LIMITS.copy()
+        elif self.side == "right":
+            self.joint_limits = RIGHT_DEFAULT_JOINTS_LIMITS.copy()
+        # If side is None, keep the default safety limits
 
 @RobotConfig.register_subclass("openarm_follower")
 @dataclass

@@ -42,7 +42,9 @@ class OpenArmBiGamepadJointsTeleop(Teleoperator):
         self.zero_return_progress = 0.0
         self.zero_return_duration = 5.0
         self.start_positions = None
-        
+        self.active_arm = "right"
+        self.active_arm_locked = None
+
         # Saved positions list
         self.saved_positions = []
         
@@ -128,23 +130,106 @@ class OpenArmBiGamepadJointsTeleop(Teleoperator):
     @check_if_not_connected
     def get_action(self):
         self.gamepad.update()
+        axes = self._get_all_axes()
         
-        # Check for arm toggle (button depends on controller type)
+        # ========== HANDLE RETURN TO ZERO (if in progress) ==========
+        if self.returning_to_zero:
+            # Use LOCKED arm (ignore active_arm changes)
+            if self.active_arm_locked == "left":
+                locked_positions = self.left_joint_positions
+            else:
+                locked_positions = self.right_joint_positions
+            
+            self.zero_return_progress += self.dt / self.zero_return_duration
+            
+            if self.zero_return_progress >= 1.0:
+                # FINISHED returning to zero
+                locked_positions[:7] = 0.0
+                self.returning_to_zero = False
+                self.active_arm_locked = None  # UNLOCK
+                logger.info("Arm returned to zero")
+            else:
+                # STILL returning to zero
+                t = 0.5 - 0.5 * np.cos(self.zero_return_progress * np.pi)
+                locked_positions[:7] = self.start_positions * (1.0 - t)
+            
+            # Build action dict and EXIT (don't process any other input)
+            action_dict = {}
+            for i in range(self.num_joints - 1):
+                action_dict[f"left_joint_{i+1}.pos"] = float(self.left_joint_positions[i])
+                action_dict[f"left_joint_{i+1}.vel"] = 0.0
+                action_dict[f"left_joint_{i+1}.torque"] = 0.0
+                action_dict[f"right_joint_{i+1}.pos"] = float(self.right_joint_positions[i])
+                action_dict[f"right_joint_{i+1}.vel"] = 0.0
+                action_dict[f"right_joint_{i+1}.torque"] = 0.0
+            
+            action_dict["left_gripper.pos"] = float(self.left_joint_positions[-1])
+            action_dict["left_gripper.vel"] = 0.0
+            action_dict["left_gripper.torque"] = 0.0
+            action_dict["right_gripper.pos"] = float(self.right_joint_positions[-1])
+            action_dict["right_gripper.vel"] = 0.0
+            action_dict["right_gripper.torque"] = 0.0
+            
+            return action_dict
+        
+        # ========== NORMAL CONTROL (not returning to zero) ==========
+        
+        # Check PS button FIRST (before arm toggle)
+        if self._get_button(self.ps_button):
+            # START return to zero
+            logger.info(f"Returning {self.active_arm} arm to zero...")
+            self.returning_to_zero = True
+            self.active_arm_locked = self.active_arm  # LOCK current arm
+            self.zero_return_progress = 0.0
+            
+            # Get starting positions of LOCKED arm
+            if self.active_arm_locked == "left":
+                self.start_positions = self.left_joint_positions[:7].copy()
+            else:
+                self.start_positions = self.right_joint_positions[:7].copy()
+            
+            # Return current state immediately (don't process other buttons)
+            action_dict = {}
+            for i in range(self.num_joints - 1):
+                action_dict[f"left_joint_{i+1}.pos"] = float(self.left_joint_positions[i])
+                action_dict[f"left_joint_{i+1}.vel"] = 0.0
+                action_dict[f"left_joint_{i+1}.torque"] = 0.0
+                action_dict[f"right_joint_{i+1}.pos"] = float(self.right_joint_positions[i])
+                action_dict[f"right_joint_{i+1}.vel"] = 0.0
+                action_dict[f"right_joint_{i+1}.torque"] = 0.0
+            
+            action_dict["left_gripper.pos"] = float(self.left_joint_positions[-1])
+            action_dict["left_gripper.vel"] = 0.0
+            action_dict["left_gripper.torque"] = 0.0
+            action_dict["right_gripper.pos"] = float(self.right_joint_positions[-1])
+            action_dict["right_gripper.vel"] = 0.0
+            action_dict["right_gripper.torque"] = 0.0
+            
+            return action_dict
+        
+        # Get current active arm's positions
+        if self.active_arm == "left":
+            current_positions = self.left_joint_positions
+        else:
+            current_positions = self.right_joint_positions
+        
+        # Arm toggle button
         toggle_button_pressed = self._get_button(self.toggle_button)
         if toggle_button_pressed and not self.last_toggle_button_state:
             self.active_arm = "right" if self.active_arm == "left" else "left"
             logger.info(f"Switched to {self.active_arm.upper()} arm control")
+            # Update current_positions reference after switch
+            if self.active_arm == "left":
+                current_positions = self.left_joint_positions
+            else:
+                current_positions = self.right_joint_positions
         self.last_toggle_button_state = toggle_button_pressed
         
-        # Get current arm's joint positions
-        current_positions = self.left_joint_positions if self.active_arm == "left" else self.right_joint_positions
-
-        # Check for position print (Triangle/Y button)
+        # Position print button
         print_button_pressed = self._get_button(self.print_button)
         if print_button_pressed and not self.last_print_button_state:
-            can_port = "can0" if self.active_arm == "left" else "can1"
+            can_port = "can1" if self.active_arm == "left" else "can0"
             
-            # Create position dict
             position_dict = {
                 'arm': self.active_arm,
                 'can_port': can_port,
@@ -160,11 +245,10 @@ class OpenArmBiGamepadJointsTeleop(Teleoperator):
                 }
             }
             
-            # Add to saved positions list
             self.saved_positions.append(position_dict)
             
             print("\n" + "="*60)
-            print("SAVED POSITIONS - Copy this list:")
+            print("SAVED POSITIONS:")
             print("="*60)
             print("saved_positions = [")
             for i, pos in enumerate(self.saved_positions):
@@ -179,131 +263,95 @@ class OpenArmBiGamepadJointsTeleop(Teleoperator):
                 print(f"    }},")
             print("]")
             print("="*60 + "\n")
-
+        
         self.last_print_button_state = print_button_pressed
-
-        # Get axes once
-        axes = self._get_all_axes()
         
-        # Check for reset to zero (auto-detected button)
-        if self._get_button(self.ps_button):
-            if not self.returning_to_zero:
-                logger.info(f"Returning {self.active_arm} arm to zero...")
-                self.returning_to_zero = True
-                self.zero_return_progress = 0.0
-                self.start_positions = current_positions[:7].copy()
+        # Joint velocities
+        joint_velocities = np.zeros(self.num_joints)
         
-        # Handle return to zero
-        if self.returning_to_zero:
-            self.zero_return_progress += self.dt / self.zero_return_duration
-            
-            if self.zero_return_progress >= 1.0:
-                current_positions[:7] = 0.0
-                self.returning_to_zero = False
-                logger.info(f"{self.active_arm.upper()} arm returned to zero")
-            else:
-                t = 0.5 - 0.5 * np.cos(self.zero_return_progress * np.pi)
-                current_positions[:7] = self.start_positions * (1.0 - t)
-        else:
-            # Normal joint control
-            joint_velocities = np.zeros(self.num_joints)
-            
-            if len(axes) >= 6:
-                # Left stick: J1 up/down (invert for RIGHT arm now), J2 left/right
-                if self.active_arm == "right":  # Swapped from "left"
-                    joint_velocities[0] = -axes[1] * self.joint_velocity_scale * self.dt  # Inverted for right
-                else:
-                    joint_velocities[0] = axes[1] * self.joint_velocity_scale * self.dt  # Normal for left
-                
-                joint_velocities[1] = axes[0] * self.joint_velocity_scale * self.dt  # J2 left/right
-                
-                # Right stick: J3 and J4
-                joint_velocities[2] = axes[3] * self.joint_velocity_scale * self.dt
-                joint_velocities[3] = -axes[4] * self.joint_velocity_scale * self.dt
-                
-                # D-pad for J5
-                dpad_x, dpad_y = self._get_hat()
-                joint_velocities[4] = dpad_x * self.joint_velocity_scale * self.dt * 0.5
-                
-                # Shoulder buttons for J6
-                if self._get_button(4):  # L1
-                    joint_velocities[5] = self.joint_velocity_scale * self.dt * 0.5
-                if self._get_button(5):  # R1
-                    joint_velocities[5] = -self.joint_velocity_scale * self.dt * 0.5
-                
-                # D-pad up/down for J7 (invert for RIGHT arm now)
-                if self.active_arm == "right":  # Swapped from "left"
-                    joint_velocities[6] = dpad_y * self.joint_velocity_scale * self.dt * 0.5  # Inverted
-                else:
-                    joint_velocities[6] = -dpad_y * self.joint_velocity_scale * self.dt * 0.5  # Normal
-
-            # Apply velocities with clamping (same limits for both arms)
-            for i in range(7):
-                new_pos = current_positions[i] + joint_velocities[i]
-                
-                if i == 0:  # J1
-                    min_limit, max_limit = -75.0, 75.0
-                elif i == 1:  # J2
-                    min_limit, max_limit = -90.0, 90.0
-                elif i == 2:  # J3
-                    min_limit, max_limit = -85.0, 85.0
-                elif i == 3:  # J4
-                    min_limit, max_limit = 0.0, 135.0
-                elif i == 4:  # J5
-                    min_limit, max_limit = -85.0, 85.0
-                elif i == 5:  # J6
-                    min_limit, max_limit = -40.0, 40.0
-                elif i == 6:  # J7
-                    min_limit, max_limit = -80.0, 80.0
-                else:
-                    min_limit, max_limit = -90.0, 90.0
-                
-                current_positions[i] = np.clip(new_pos, min_limit, max_limit)
-        
-        # Gripper control - L2 closes, R2 opens (incremental)
         if len(axes) >= 6:
-            l2_trigger = axes[2]  # -1 (released) to +1 (pressed)
-            r2_trigger = axes[5]  # -1 (released) to +1 (pressed)
+            if self.active_arm == "right":
+                joint_velocities[0] = -axes[1] * self.joint_velocity_scale * self.dt
+            else:
+                joint_velocities[0] = axes[1] * self.joint_velocity_scale * self.dt
             
-            # Normalize triggers from [-1, +1] to [0, 1]
+            joint_velocities[1] = axes[0] * self.joint_velocity_scale * self.dt
+            joint_velocities[2] = axes[3] * self.joint_velocity_scale * self.dt
+            joint_velocities[3] = -axes[4] * self.joint_velocity_scale * self.dt
+            
+            dpad_x, dpad_y = self._get_hat()
+            joint_velocities[4] = dpad_x * self.joint_velocity_scale * self.dt * 0.5
+            
+            if self._get_button(4):
+                joint_velocities[5] = self.joint_velocity_scale * self.dt * 0.5
+            if self._get_button(5):
+                joint_velocities[5] = -self.joint_velocity_scale * self.dt * 0.5
+            
+            if self.active_arm == "right":
+                joint_velocities[6] = dpad_y * self.joint_velocity_scale * self.dt * 0.5
+            else:
+                joint_velocities[6] = -dpad_y * self.joint_velocity_scale * self.dt * 0.5
+        
+        # Apply joint limits
+        for i in range(7):
+            new_pos = current_positions[i] + joint_velocities[i]
+            
+            if i == 0:
+                min_limit, max_limit = -75.0, 75.0
+            elif i == 1:
+                min_limit, max_limit = -90.0, 90.0
+            elif i == 2:
+                min_limit, max_limit = -85.0, 85.0
+            elif i == 3:
+                min_limit, max_limit = 0.0, 135.0
+            elif i == 4:
+                min_limit, max_limit = -85.0, 85.0
+            elif i == 5:
+                min_limit, max_limit = -40.0, 40.0
+            elif i == 6:
+                min_limit, max_limit = -80.0, 80.0
+            else:
+                min_limit, max_limit = -90.0, 90.0
+            
+            current_positions[i] = np.clip(new_pos, min_limit, max_limit)
+        
+        # Gripper control
+        if len(axes) >= 6:
+            l2_trigger = axes[2]
+            r2_trigger = axes[5]
+            
             l2_normalized = (l2_trigger + 1.0) / 2.0
             r2_normalized = (r2_trigger + 1.0) / 2.0
             
-            # Incremental gripper control
             gripper_velocity = 0.0
-            if l2_normalized > 0.1:  # L2 pressed - CLOSE gripper
-                gripper_velocity = -l2_normalized * 50.0 * self.dt  # Move toward -65
-            elif r2_normalized > 0.1:  # R2 pressed - OPEN gripper
-                gripper_velocity = r2_normalized * 50.0 * self.dt  # Move toward 0
+            if l2_normalized > 0.1:
+                gripper_velocity = -l2_normalized * 50.0 * self.dt
+            elif r2_normalized > 0.1:
+                gripper_velocity = r2_normalized * 50.0 * self.dt
             
-            # Apply velocity and clamp
             new_gripper_pos = current_positions[-1] + gripper_velocity
-            current_positions[-1] = np.clip(new_gripper_pos, 
-                                            self.config.gripper_close_position, 
+            current_positions[-1] = np.clip(new_gripper_pos,
+                                            self.config.gripper_close_position,
                                             self.config.gripper_open_position)
         
-        # Update the active arm's positions
-        if self.active_arm == "left":
-            self.left_joint_positions = current_positions
-        else:
-            self.right_joint_positions = current_positions
+        # NOTE: No need to update arrays - current_positions is already a reference to left or right
         
-        # Build action dict for BOTH arms (with positions, velocities, AND torques)
+        # Build action dict
         action_dict = {}
         for i in range(self.num_joints - 1):
             action_dict[f"left_joint_{i+1}.pos"] = float(self.left_joint_positions[i])
-            action_dict[f"left_joint_{i+1}.vel"] = 0.0  # Velocity (zero for position control)
-            action_dict[f"left_joint_{i+1}.torque"] = 0.0  # Torque (not used in position control)
+            action_dict[f"left_joint_{i+1}.vel"] = 0.0
+            action_dict[f"left_joint_{i+1}.torque"] = 0.0
             action_dict[f"right_joint_{i+1}.pos"] = float(self.right_joint_positions[i])
-            action_dict[f"right_joint_{i+1}.vel"] = 0.0  # Velocity
-            action_dict[f"right_joint_{i+1}.torque"] = 0.0  # Torque
+            action_dict[f"right_joint_{i+1}.vel"] = 0.0
+            action_dict[f"right_joint_{i+1}.torque"] = 0.0
         
         action_dict["left_gripper.pos"] = float(self.left_joint_positions[-1])
-        action_dict["left_gripper.vel"] = 0.0  # Gripper velocity
-        action_dict["left_gripper.torque"] = 0.0  # Gripper torque
+        action_dict["left_gripper.vel"] = 0.0
+        action_dict["left_gripper.torque"] = 0.0
         action_dict["right_gripper.pos"] = float(self.right_joint_positions[-1])
-        action_dict["right_gripper.vel"] = 0.0  # Gripper velocity
-        action_dict["right_gripper.torque"] = 0.0  # Gripper torque
+        action_dict["right_gripper.vel"] = 0.0
+        action_dict["right_gripper.torque"] = 0.0
         
         return action_dict
     

@@ -30,3 +30,19 @@ class OpenArmBiGamepadJointsTeleopConfig(TeleoperatorConfig):
     use_ik: bool = False
     left_invert_gripper: bool = False
     right_invert_gripper: bool = True  # Right arm typically inverted
+
+@TeleoperatorConfig.register_subclass("openarm_hybrid_cartesian")
+@dataclass
+class OpenArmHybridCartesianTeleopConfig(TeleoperatorConfig):
+    """Hybrid Cartesian XY + Joint control teleoperation."""
+    num_joints: int = 8
+    joint_velocity_scale: float = 30.0
+    xy_velocity_scale: float = 0.1
+    x_sensitivity: float = 1.0
+    y_sensitivity: float = 1.0
+    z_sensitivity: float = 1.0
+    gripper_open_position: float = 0.0
+    gripper_close_position: float = -65.0
+    left_invert_gripper: bool = False
+    right_invert_gripper: bool = True
+    

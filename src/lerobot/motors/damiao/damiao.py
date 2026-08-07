@@ -257,7 +257,15 @@ class DamiaoMotorsBus(MotorsBusBase):
 
         if disable_torque:
             try:
-                self.disable_torque()
+                # Sent three times, not once. CAN frames can be dropped, and motors in a
+                # transitional state (the gripper especially) can miss the first one --
+                # which leaves an arm holding torque after we believe we have released it.
+                # disable_torque is idempotent, so the only cost of the extra sends is
+                # 100 ms on a teardown path.
+                for attempt in range(3):
+                    self.disable_torque()
+                    if attempt < 2:
+                        time.sleep(0.05)
             except Exception as e:
                 logger.warning(f"Failed to disable torque during disconnect: {e}")
 

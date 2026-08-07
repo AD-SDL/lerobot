@@ -255,9 +255,14 @@ class OpenCVCamera(Camera):
 
         success = self.videocapture.set(cv2.CAP_PROP_FPS, float(self.fps))
         actual_fps = self.videocapture.get(cv2.CAP_PROP_FPS)
-        # Use math.isclose for robust float comparison
-        if not success or not math.isclose(self.fps, actual_fps, rel_tol=1e-3):
-            raise RuntimeError(f"{self} failed to set fps={self.fps} ({actual_fps=}).")
+        # Judge on the value the device reports back, not on set()'s return flag: the
+        # V4L2 backend returns False for cameras that were already configured out of
+        # band (v4l2-ctl) and then applies the setting anyway. The isclose check below
+        # is the one that actually matters and is deliberately kept -- a camera silently
+        # running at 5 fps when 30 was asked for starves the record loop, and every
+        # episode recorded before anyone notices is unusable.
+        if not math.isclose(self.fps, actual_fps, rel_tol=1e-3):
+            raise RuntimeError(f"{self} failed to set fps={self.fps} ({actual_fps=}, {success=}).")
 
     def _validate_fourcc(self) -> None:
         """Validates and sets the camera's FOURCC code."""
@@ -292,14 +297,16 @@ class OpenCVCamera(Camera):
         width_success = self.videocapture.set(cv2.CAP_PROP_FRAME_WIDTH, float(self.capture_width))
         height_success = self.videocapture.set(cv2.CAP_PROP_FRAME_HEIGHT, float(self.capture_height))
 
+        # Same reasoning as _validate_fps: the readback is authoritative, the set()
+        # return flag is not. Both flags stay in the error messages for diagnosis.
         actual_width = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_WIDTH)))
-        if not width_success or self.capture_width != actual_width:
+        if self.capture_width != actual_width:
             raise RuntimeError(
                 f"{self} failed to set capture_width={self.capture_width} ({actual_width=}, {width_success=})."
             )
 
         actual_height = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_HEIGHT)))
-        if not height_success or self.capture_height != actual_height:
+        if self.capture_height != actual_height:
             raise RuntimeError(
                 f"{self} failed to set capture_height={self.capture_height} ({actual_height=}, {height_success=})."
             )

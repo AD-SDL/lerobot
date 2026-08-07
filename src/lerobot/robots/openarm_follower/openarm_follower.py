@@ -69,11 +69,20 @@ class OpenArmFollower(Robot):
             data_bitrate=self.config.can_data_bitrate if self.config.use_can_fd else None,
         )
 
+        # draccus has no null literal, so `--robot.side=None` on the CLI arrives as the
+        # four-character string "None" and would otherwise fall through to the raise
+        # below -- despite the error message explicitly offering 'None' as a valid value.
+        if config.side == "None":
+            config.side = None
+
         if config.side is not None:
+            # .copy() because these are module-level dicts. Assigning them by reference
+            # means a later mutation of config.joint_limits silently retunes every arm
+            # constructed afterwards in the same process, bimanual included.
             if config.side == "left":
-                config.joint_limits = LEFT_DEFAULT_JOINTS_LIMITS
+                config.joint_limits = LEFT_DEFAULT_JOINTS_LIMITS.copy()
             elif config.side == "right":
-                config.joint_limits = RIGHT_DEFAULT_JOINTS_LIMITS
+                config.joint_limits = RIGHT_DEFAULT_JOINTS_LIMITS.copy()
             else:
                 raise ValueError(
                     "config.side must be either 'left', 'right' (for default values) or 'None' (for CLI values)"

@@ -20,25 +20,29 @@ from lerobot.cameras import CameraConfig
 
 from ..config import RobotConfig
 
+# Retuned against the physical arms at ANL: upstream's defaults are conservative
+# enough that the gamepad IK regularly hit a limit mid-reach. joint_1 is widened
+# asymmetrically (outward, away from the torso) because that is the direction the
+# arm actually needs; the inward bound is what stops it hitting its own base.
 LEFT_DEFAULT_JOINTS_LIMITS: dict[str, tuple[float, float]] = {
-    "joint_1": (-75.0, 75.0),
-    "joint_2": (-90.0, 9.0),
-    "joint_3": (-85.0, 85.0),
+    "joint_1": (-120.0, 90.0),
+    "joint_2": (-90.0, 10.0),
+    "joint_3": (-90.0, 90.0),
     "joint_4": (0.0, 135.0),
-    "joint_5": (-85.0, 85.0),
+    "joint_5": (-90.0, 90.0),
     "joint_6": (-40.0, 40.0),
-    "joint_7": (-80.0, 80.0),
+    "joint_7": (-90.0, 90.0),
     "gripper": (-65.0, 0.0),
 }
 
 RIGHT_DEFAULT_JOINTS_LIMITS: dict[str, tuple[float, float]] = {
-    "joint_1": (-75.0, 75.0),
-    "joint_2": (-9.0, 90.0),
-    "joint_3": (-85.0, 85.0),
+    "joint_1": (-90.0, 120.0),
+    "joint_2": (-10.0, 90.0),
+    "joint_3": (-90.0, 90.0),
     "joint_4": (0.0, 135.0),
-    "joint_5": (-85.0, 85.0),
+    "joint_5": (-90.0, 90.0),
     "joint_6": (-40.0, 40.0),
-    "joint_7": (-80.0, 80.0),
+    "joint_7": (-90.0, 90.0),
     "gripper": (-65.0, 0.0),
 }
 

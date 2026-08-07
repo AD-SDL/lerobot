@@ -177,13 +177,27 @@ robstride = ["lerobot[can-dep]"]
 # ikpy is only needed by the OpenArm gamepad teleoperators' IK mode; without it they
 # fall back to direct joint control, so it stays an extra rather than a core dependency.
 #
-# Tactile fingers (`--robot.tactile.sides=...`) need `sensible_finger`, which is
-# deliberately NOT listed here: it is not on PyPI and has no published remote yet, so a
-# `tactile` extra would fail to resolve rather than doing nothing. Install it from a
-# checkout -- `pip install -e ../sensible_finger` -- and add the extra here once the
-# package is published. Nothing else in lerobot imports it; arms without fingers are
-# unaffected either way.
 openarms = ["lerobot[damiao]", "lerobot[ikpy-dep]", "lerobot[gamepad]"]
+# Tactile fingers (`--robot.tactile.sides=...`). Deliberately NOT part of
+# `openarms`: there are several OpenArms and two fingers, so the overwhelmingly
+# common install has no tactile hardware anywhere near it and should not be made
+# to authenticate to a private repository to get one.
+#
+# A direct VCS reference rather than a PyPI version because `sensible_finger` is
+# not published. Two consequences worth knowing before you hit them:
+#   - Every installer needs GitHub credentials with access to AD-SDL, including
+#     CI runners and the NUC. `pip install lerobot[tactile]` from an unauthorised
+#     machine fails at clone time, not with a resolver error.
+#   - Direct references are rejected by PyPI upload, so this extra must be
+#     dropped or repointed before any release of *this* fork is published.
+#     Nothing else here is affected; the extra is inert unless requested.
+#
+# Pinned to a tag, not a branch. A moving `@main` would silently change the
+# recorded dataset schema -- the tactile column widths come straight from that
+# package -- between two installs that both call themselves the same version.
+tactile = [
+    "sensible-finger[midi] @ git+https://github.com/AD-SDL/sensible_finger@v0.1.0",
+]
 gamepad = ["lerobot[pygame-dep]", "hidapi>=0.14.0,<0.15.0"]
 hopejr = ["lerobot[feetech]", "lerobot[pygame-dep]"]
 lekiwi = ["lerobot[feetech]", "lerobot[pyzmq-dep]"]

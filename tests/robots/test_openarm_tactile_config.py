@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+# Copyright 2026 UChicago Argonne, LLC. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -32,6 +32,7 @@ the configuration nearly every lerobot user is in.
 """
 
 import ast
+import importlib.util
 from dataclasses import fields
 from pathlib import Path
 from unittest.mock import patch
@@ -139,9 +140,18 @@ def test_enabled_flag_follows_sides():
 # Need the tactile package
 # --------------------------------------------------------------------------------------
 
-pytest.importorskip("sensible_finger", reason="tactile fingers are an optional add-on")
+# A decorator, not a module-level `pytest.importorskip`. That call raises
+# `Skipped(allow_module_level=True)`, which aborts collection of the *whole file* --
+# including the four tests above it, which are precisely the ones that assert lerobot
+# still behaves on a machine without the tactile package. They would have been skipped
+# on exactly the configuration they exist to protect: stock lerobot CI.
+requires_tactile = pytest.mark.skipif(
+    importlib.util.find_spec("sensible_finger") is None,
+    reason="tactile fingers are an optional add-on",
+)
 
 
+@requires_tactile
 def test_mirror_fields_all_exist_upstream_with_matching_defaults():
     """Every mirrored field still exists on the real config, with the same default.
 
@@ -179,6 +189,7 @@ def test_mirror_fields_all_exist_upstream_with_matching_defaults():
     )
 
 
+@requires_tactile
 def test_build_produces_matching_finger_configs():
     from sensible_finger.config import TactileConfig
 
@@ -201,6 +212,7 @@ def test_build_produces_matching_finger_configs():
     assert reader_kwargs == {"right": {"port_index": 3}}
 
 
+@requires_tactile
 def test_build_rejects_ports_naming_an_unconfigured_side():
     """A typo'd side would otherwise be silently dropped -- and the finger it was meant
     to pin would fall back to enumeration order, i.e. exactly the left/right swap the
@@ -210,6 +222,7 @@ def test_build_rejects_ports_naming_an_unconfigured_side():
         config.build()
 
 
+@requires_tactile
 def test_enabled_tactile_declares_columns_without_touching_hardware():
     """The schema is a pure function of config. It has to be: `extra_dataset_features`
     is read before `connect()`, and a schema that varied with whether a cable happened
@@ -232,6 +245,7 @@ def test_enabled_tactile_declares_columns_without_touching_hardware():
     assert not robot.tactile.is_connected
 
 
+@requires_tactile
 def test_observation_state_width_is_unchanged_by_tactile():
     """The load-bearing claim of the whole design.
 
@@ -257,6 +271,7 @@ def test_observation_state_width_is_unchanged_by_tactile():
     assert set(tactile_features) - set(plain_features) == set(tactile.extra_dataset_features)
 
 
+@requires_tactile
 def test_merge_state_mode_widens_state_and_leaves_housekeeping_out():
     """The opposite trade: one STATE feature that stock ACT/diffusion/SmolVLA consume
     with no processor step, at the price of making these episodes untrainable alongside
@@ -291,6 +306,7 @@ def test_merge_state_mode_widens_state_and_leaves_housekeeping_out():
     }
 
 
+@requires_tactile
 def test_read_tactile_keys_match_the_declared_names_end_to_end():
     """Run a real frame through lerobot's own `build_dataset_frame`.
 
@@ -334,6 +350,7 @@ def test_read_tactile_keys_match_the_declared_names_end_to_end():
     assert frame["observation.tactile.left.status"][status.index("tactile_left.status.valid")] == 1.0
 
 
+@requires_tactile
 def test_read_tactile_survives_a_driver_failure():
     """A raise here would take down the record loop and lose the whole take, so the
     failure mode is a zero frame flagged `valid=0` -- recoverable, and exactly what the
@@ -351,6 +368,7 @@ def test_read_tactile_survives_a_driver_failure():
     assert robot._tactile_read_failed
 
 
+@requires_tactile
 def test_bimanual_forwards_tactile_to_both_arms():
     """`BiOpenArmFollower` rebuilds each arm's config field by field, so a new field is
     dropped unless it is explicitly forwarded -- and dropped silently: the arms come up
@@ -370,6 +388,7 @@ def test_bimanual_forwards_tactile_to_both_arms():
     }
 
 
+@requires_tactile
 def test_bimanual_does_not_prefix_tactile_keys():
     """The failure this exists to prevent is a `KeyError` on frame 1.
 
@@ -387,6 +406,7 @@ def test_bimanual_does_not_prefix_tactile_keys():
     assert robot.left_arm.tactile_value_names | robot.right_arm.tactile_value_names == declared
 
 
+@requires_tactile
 def test_bimanual_rejects_two_arms_claiming_the_same_finger():
     """Both arms declaring `left` would silently overwrite each other in the merged
     observation, and the dataset would record one finger's readings under both columns."""
@@ -394,6 +414,7 @@ def test_bimanual_rejects_two_arms_claiming_the_same_finger():
         _bimanual(["left"], ["left"])
 
 
+@requires_tactile
 def test_bimanual_observation_state_width_is_unchanged_by_tactile():
     """The `[48]` claim, for the configuration that actually runs on the robot."""
     plain = _bimanual([], [])
@@ -409,6 +430,7 @@ def test_bimanual_observation_state_width_is_unchanged_by_tactile():
     assert state(tactile) == state(plain)
 
 
+@requires_tactile
 def test_wide_tactile_columns_are_withheld_from_the_live_viewer():
     """80 individually meaningless time series would bury the ones an operator watches.
     The narrow companions -- derived summary and health status -- stay visible."""

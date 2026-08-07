@@ -103,7 +103,23 @@ class OpenArmFollower(Robot):
         self.tactile = None
         self._tactile_read_failed = False
         if config.tactile.enabled:
-            from sensible_finger.array import TactileArray
+            try:
+                from sensible_finger.array import TactileArray
+            except ImportError as e:
+                # The bare ModuleNotFoundError is unhelpful here: the package is not
+                # on PyPI, so "pip install sensible_finger" -- the obvious next thing
+                # to try -- fails too, and the reason (a private VCS reference that
+                # needs GitHub auth) is not guessable from the traceback.
+                raise ImportError(
+                    "tactile fingers were requested (--robot.tactile.sides="
+                    f"{','.join(config.tactile.sides)}) but sensible_finger is not "
+                    "installed.\n\n"
+                    '    pip install "lerobot[tactile]"\n\n'
+                    "That pulls github.com/AD-SDL/sensible_finger, which is private, so "
+                    "the machine needs GitHub credentials with AD-SDL access. For local "
+                    "development against a checkout, `pip install -e ../sensible_finger` "
+                    "instead. Omit --robot.tactile.sides to run this arm without fingers."
+                ) from e
 
             tactile_config, reader_kwargs = config.tactile.build()
             self.tactile = TactileArray(tactile_config, reader_kwargs=reader_kwargs)

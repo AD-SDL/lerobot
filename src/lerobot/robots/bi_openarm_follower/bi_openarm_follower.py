@@ -69,6 +69,7 @@ class BiOpenArmFollower(BimanualMixin, Robot):
             position_kd=config.left_arm_config.position_kd,
             position_kp=config.left_arm_config.position_kp,
             joint_limits=config.left_arm_config.joint_limits,
+            tactile=config.left_arm_config.tactile,
         )
 
         right_arm_config = OpenArmFollowerConfig(
@@ -88,6 +89,7 @@ class BiOpenArmFollower(BimanualMixin, Robot):
             position_kd=config.right_arm_config.position_kd,
             position_kp=config.right_arm_config.position_kp,
             joint_limits=config.right_arm_config.joint_limits,
+            tactile=config.right_arm_config.tactile,
         )
 
         self.left_arm = OpenArmFollower(left_arm_config)
@@ -95,6 +97,23 @@ class BiOpenArmFollower(BimanualMixin, Robot):
 
         # Only for compatibility with other parts of the codebase that expect a `robot.cameras` attribute
         self.cameras = {**self.left_arm.cameras, **self.right_arm.cameras}
+
+        # Tactile keys are exempt from the left_/right_ prefixing below, exactly as
+        # top-level cameras are. A finger's dataset name already carries its side
+        # (`tactile_left.4_2`), that name is what the feature spec declares, and
+        # prefixing it to `left_tactile_left.4_2` would make it unfindable --
+        # `build_dataset_frame` indexes `values[name]` and would KeyError on frame 1.
+        self._passthrough_keys = self.left_arm.tactile_value_names | self.right_arm.tactile_value_names
+        _tactile_collisions = self.left_arm.tactile_value_names & self.right_arm.tactile_value_names
+        if _tactile_collisions:
+            # Both arms declaring the same finger side. Without this check the two
+            # would overwrite each other in the merged observation, and the dataset
+            # would record one finger's readings under both columns.
+            raise ValueError(
+                "Left and right arms declare overlapping tactile sides. Give each finger "
+                "a distinct `tactile.sides` entry; overlapping names: "
+                f"{sorted({n.split('.')[0] for n in _tactile_collisions})}"
+            )
 
     @property
     def _motors_ft(self) -> dict[str, type]:
@@ -120,6 +139,18 @@ class BiOpenArmFollower(BimanualMixin, Robot):
     def action_features(self) -> dict[str, type]:
         return self._motors_ft
 
+    @cached_property
+    def extra_dataset_features(self) -> dict[str, dict]:
+        """Union of both arms' tactile columns.
+
+        Built from the arms' own `extra_dataset_features` rather than reconstructed
+        here -- unlike `observation_features`, which this class rebuilds from
+        `_motors_ft`/`_cameras_ft` and which therefore silently drops anything an
+        arm adds on its own. Keys are already side-qualified, so the union is
+        disjoint; `__init__` rejects the configuration where it would not be.
+        """
+        return {**self.left_arm.extra_dataset_features, **self.right_arm.extra_dataset_features}
+
     def setup_motors(self) -> None:
         raise NotImplementedError(
             "Motor ID configuration is typically done via manufacturer tools for CAN motors."
@@ -129,13 +160,15 @@ class BiOpenArmFollower(BimanualMixin, Robot):
     def get_observation(self) -> RobotObservation:
         obs_dict: RobotObservation = {}
 
-        # Add "left_" prefix to per-arm keys; keep top-level camera keys unprefixed.
+        # Add "left_" prefix to per-arm keys; keep top-level camera and tactile keys
+        # unprefixed (see `_top_level_cam_keys` / `_passthrough_keys` in __init__).
         for key, value in self.left_arm.get_observation().items():
-            obs_dict[key if key in self._top_level_cam_keys else f"left_{key}"] = value
+            unprefixed = key in self._top_level_cam_keys or key in self._passthrough_keys
+            obs_dict[key if unprefixed else f"left_{key}"] = value
 
         # Add "right_" prefix
         for key, value in self.right_arm.get_observation().items():
-            obs_dict[f"right_{key}"] = value
+            obs_dict[key if key in self._passthrough_keys else f"right_{key}"] = value
 
         return obs_dict
 

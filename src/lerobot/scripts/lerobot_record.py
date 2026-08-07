@@ -163,6 +163,7 @@ from lerobot.utils.utils import (
     log_say,
 )
 from lerobot.utils.visualization_utils import (
+    hidden_visualization_keys,
     init_visualization,
     log_visualization_data,
     shutdown_visualization,
@@ -278,6 +279,9 @@ def record_loop(
 
     control_interval = 1 / fps
 
+    # Pure function of config, so hoisted out of the loop.
+    hidden_viz_keys = hidden_visualization_keys(robot.extra_dataset_features) if display_data else None
+
     no_action_count = 0
     timestamp = 0
     start_episode_t = time.perf_counter()
@@ -345,6 +349,7 @@ def record_loop(
                 observation=obs_processed,
                 action=action_values,
                 compress_images=display_compressed_images,
+                hidden_observation_keys=hidden_viz_keys,
             )
 
         dt_s = time.perf_counter() - start_loop_t
@@ -406,6 +411,15 @@ def record(
             initial_features=create_initial_features(observation=robot.observation_features),
             use_videos=cfg.dataset.video,
         ),
+        # Columns from sensors that `observation_features` cannot describe -- wide 1-D
+        # vectors such as a tactile pad, which `hw_to_dataset_features` rejects because
+        # it only knows `float` (one state element) and 3-tuple (an image). See
+        # `Robot.extra_dataset_features`; empty for every robot that does not use it.
+        #
+        # Passed last so that a sensor merging into an existing key (tactile's
+        # `merge_state` mode targets `observation.state`) appends its names after the
+        # motors' rather than in front of them.
+        robot.extra_dataset_features,
     )
 
     dataset = None
@@ -428,6 +442,18 @@ def record(
                 if num_cameras > 0
                 else 0,
             )
+            # Checked ahead of the generic comparison below, which would also catch
+            # this but reports it by printing both complete feature dicts -- and with
+            # tactile enabled each is well over a hundred entries, so the one line
+            # that matters is unfindable. Name the missing columns instead.
+            missing_extra = sorted(set(robot.extra_dataset_features) - set(dataset.features))
+            if missing_extra:
+                raise ValueError(
+                    f"Cannot resume '{cfg.dataset.repo_id}': it was recorded without the columns "
+                    f"{missing_extra}, which this robot's configuration now produces. Appending "
+                    "would leave the earlier episodes with nothing in them. Record to a new "
+                    "dataset, or disable the sensor that adds them."
+                )
             sanity_check_dataset_robot_compatibility(dataset, robot, cfg.dataset.fps, dataset_features)
         else:
             # Reject eval_ prefix — for policy evaluation use lerobot-rollout

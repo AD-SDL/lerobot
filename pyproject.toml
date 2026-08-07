@@ -176,6 +176,13 @@ robstride = ["lerobot[can-dep]"]
 # Robots
 # ikpy is only needed by the OpenArm gamepad teleoperators' IK mode; without it they
 # fall back to direct joint control, so it stays an extra rather than a core dependency.
+#
+# Tactile fingers (`--robot.tactile.sides=...`) need `sensible_finger`, which is
+# deliberately NOT listed here: it is not on PyPI and has no published remote yet, so a
+# `tactile` extra would fail to resolve rather than doing nothing. Install it from a
+# checkout -- `pip install -e ../sensible_finger` -- and add the extra here once the
+# package is published. Nothing else in lerobot imports it; arms without fingers are
+# unaffected either way.
 openarms = ["lerobot[damiao]", "lerobot[ikpy-dep]", "lerobot[gamepad]"]
 gamepad = ["lerobot[pygame-dep]", "hidapi>=0.14.0,<0.15.0"]
 hopejr = ["lerobot[feetech]", "lerobot[pygame-dep]"]

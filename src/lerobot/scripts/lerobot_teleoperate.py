@@ -126,6 +126,7 @@ from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import init_logging, move_cursor_up
 from lerobot.utils.visualization_utils import (
+    hidden_visualization_keys,
     init_visualization,
     log_visualization_data,
     shutdown_visualization,
@@ -185,6 +186,8 @@ def teleop_loop(
     """
 
     display_len = max(len(key) for key in robot.action_features)
+    # Pure function of config, so hoisted out of the loop.
+    hidden_viz_keys = hidden_visualization_keys(robot.extra_dataset_features) if display_data else None
     start = time.perf_counter()
     while True:
         loop_start = time.perf_counter()
@@ -219,6 +222,7 @@ def teleop_loop(
                 observation=obs_transition,
                 action=teleop_action,
                 compress_images=display_compressed_images,
+                hidden_observation_keys=hidden_viz_keys,
             )
 
             print("\n" + "-" * (display_len + 10))

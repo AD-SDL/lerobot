@@ -29,6 +29,31 @@ from .rerun_visualization import init_rerun, log_rerun_data, shutdown_rerun
 # Visualization backends selectable at runtime via a display-mode string (e.g. a --display_mode flag).
 VISUALIZATION_MODES = ("rerun", "foxglove")
 
+# Widest `extra_dataset_features` column still shown live. Both backends plot one
+# time series per scalar, so a wide array-sensor column becomes dozens of legend
+# entries that are individually meaningless -- and, in Rerun, dozens of entries in
+# the blueprint too. Narrow companion columns (a per-frame summary, a health/status
+# vector) stay under the threshold and remain visible, which is what an operator
+# actually watches during a take.
+MAX_LIVE_PLOT_WIDTH = 8
+
+
+def hidden_visualization_keys(extra_dataset_features: dict[str, dict]) -> set[str]:
+    """Observation keys to withhold from the live viewer, from a robot's extra features.
+
+    Computed from :pyattr:`lerobot.robots.Robot.extra_dataset_features`, which is a
+    pure function of configuration -- so call this once outside the control loop.
+
+    Only display is affected: everything here is still recorded in full. Returns an
+    empty set for robots that declare no extra features, which is nearly all of them.
+    """
+    return {
+        name
+        for ft in extra_dataset_features.values()
+        if len(ft.get("shape", ())) == 1 and ft["shape"][0] > MAX_LIVE_PLOT_WIDTH
+        for name in ft.get("names", ())
+    }
+
 
 def init_visualization(
     display_mode: str,
@@ -57,8 +82,17 @@ def log_visualization_data(
     observation: RobotObservation | None = None,
     action: RobotAction | None = None,
     compress_images: bool = False,
+    hidden_observation_keys: set[str] | None = None,
 ) -> None:
-    """Logs observation/action data to the backend selected by ``display_mode``."""
+    """Logs observation/action data to the backend selected by ``display_mode``.
+
+    ``hidden_observation_keys`` drops keys from the display only; see
+    :pyfunc:`hidden_visualization_keys`. It is skipped entirely when empty, so the
+    common case pays nothing.
+    """
+
+    if hidden_observation_keys and observation is not None:
+        observation = {k: v for k, v in observation.items() if k not in hidden_observation_keys}
 
     if display_mode == "rerun":
         log_rerun_data(observation=observation, action=action, compress_images=compress_images)

@@ -19,10 +19,10 @@ import time
 from functools import cached_property
 from typing import Any
 
-from lerobot.cameras.utils import make_cameras_from_configs
+from lerobot.cameras import make_cameras_from_configs
+from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.damiao import DamiaoMotorsBus
-from lerobot.processor import RobotAction, RobotObservation
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..robot import Robot
@@ -69,11 +69,20 @@ class OpenArmFollower(Robot):
             data_bitrate=self.config.can_data_bitrate if self.config.use_can_fd else None,
         )
 
-        if config.side is not None and config.side != "None":
+        # draccus has no null literal, so `--robot.side=None` on the CLI arrives as the
+        # four-character string "None" and would otherwise fall through to the raise
+        # below -- despite the error message explicitly offering 'None' as a valid value.
+        if config.side == "None":
+            config.side = None
+
+        if config.side is not None:
+            # .copy() because these are module-level dicts. Assigning them by reference
+            # means a later mutation of config.joint_limits silently retunes every arm
+            # constructed afterwards in the same process, bimanual included.
             if config.side == "left":
-                config.joint_limits = LEFT_DEFAULT_JOINTS_LIMITS
+                config.joint_limits = LEFT_DEFAULT_JOINTS_LIMITS.copy()
             elif config.side == "right":
-                config.joint_limits = RIGHT_DEFAULT_JOINTS_LIMITS
+                config.joint_limits = RIGHT_DEFAULT_JOINTS_LIMITS.copy()
             else:
                 raise ValueError(
                     "config.side must be either 'left', 'right' (for default values) or 'None' (for CLI values)"
@@ -87,22 +96,57 @@ class OpenArmFollower(Robot):
         # Initialize cameras
         self.cameras = make_cameras_from_configs(config.cameras)
 
+        # Optional tactile fingers. Constructed here but deliberately NOT opened:
+        # the dataset schema has to resolve before any hardware is touched, and
+        # `extra_dataset_features` below is a pure function of config for exactly
+        # that reason. Opening happens in connect().
+        self.tactile = None
+        self._tactile_read_failed = False
+        if config.tactile.enabled:
+            try:
+                from sensible_finger.array import TactileArray
+            except ImportError as e:
+                # The bare ModuleNotFoundError is unhelpful here: the package is not
+                # on PyPI, so "pip install sensible_finger" -- the obvious next thing
+                # to try -- fails too, and the reason (a private VCS reference that
+                # needs GitHub auth) is not guessable from the traceback.
+                raise ImportError(
+                    "tactile fingers were requested (--robot.tactile.sides="
+                    f"{','.join(config.tactile.sides)}) but sensible_finger is not "
+                    "installed.\n\n"
+                    '    pip install "lerobot[tactile]"\n\n'
+                    "That pulls github.com/AD-SDL/sensible_finger, which is private, so "
+                    "the machine needs GitHub credentials with AD-SDL access. For local "
+                    "development against a checkout, `pip install -e ../sensible_finger` "
+                    "instead. Omit --robot.tactile.sides to run this arm without fingers."
+                ) from e
+
+            tactile_config, reader_kwargs = config.tactile.build()
+            self.tactile = TactileArray(tactile_config, reader_kwargs=reader_kwargs)
+            logger.info(f"Tactile fingers configured: {self.tactile.sides}")
+
     @property
     def _motors_ft(self) -> dict[str, type]:
         """Motor features for observation and action spaces."""
         features: dict[str, type] = {}
         for motor in self.bus.motors:
             features[f"{motor}.pos"] = float
-            features[f"{motor}.vel"] = float  # Add this
-            features[f"{motor}.torque"] = float  # Add this
+            if self.config.use_velocity_and_torque:
+                features[f"{motor}.vel"] = float
+                features[f"{motor}.torque"] = float
         return features
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
         """Camera features for observation space."""
-        return {
-            cam: (self.config.cameras[cam].height, self.config.cameras[cam].width, 3) for cam in self.cameras
-        }
+        features: dict[str, tuple] = {}
+        for cam in self.cameras:
+            cfg = self.config.cameras[cam]
+            if getattr(cfg, "use_rgb", True):
+                features[cam] = (cfg.height, cfg.width, 3)
+            if getattr(cfg, "use_depth", False):
+                features[f"{cam}_depth"] = (cfg.height, cfg.width, 1)
+        return features
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
@@ -114,9 +158,48 @@ class OpenArmFollower(Robot):
         """Action features."""
         return self._motors_ft
 
+    @cached_property
+    def extra_dataset_features(self) -> dict[str, dict]:
+        """Dataset columns contributed outside `observation_features`.
+
+        Tactile bypasses `observation_features` on purpose. `hw_to_dataset_features`
+        has exactly two buckets -- `float` becomes part of the concatenated
+        `observation.state`, a 3-tuple becomes an image -- and raises ValueError on
+        anything else, so an 80-wide vector cannot be declared there at all.
+        `build_dataset_frame`, though, assembles *any* float32 1-D feature it is
+        given and does not special-case `observation.state`. So the tactile spec is
+        passed straight to `combine_feature_dicts` instead, and `observation.state`
+        keeps exactly the width it has without fingers.
+
+        Empty dict when tactile is off, which keeps `combine_feature_dicts` a no-op
+        and every existing recording byte-identical in schema.
+        """
+        if self.tactile is None:
+            return {}
+        from sensible_finger.integrations.lerobot import dataset_features
+
+        return dataset_features(self.tactile.config)
+
+    @cached_property
+    def tactile_value_names(self) -> set[str]:
+        """Flat observation keys the tactile array contributes.
+
+        Needed by `BiOpenArmFollower`, which prefixes `left_`/`right_` onto every
+        key it gets from an arm. These names are already side-qualified
+        (`tactile_left.4_2`) and are what the feature spec declares, so prefixing
+        them would make the declared names unfindable and KeyError on frame 1.
+        """
+        return {name for ft in self.extra_dataset_features.values() for name in ft["names"]}
+
     @property
     def is_connected(self) -> bool:
-        """Check if robot is connected."""
+        """Check if robot is connected.
+
+        Deliberately excludes tactile. `@check_if_not_connected` guards the control
+        loop, so folding a finger in here would let a yanked USB cable abort arm
+        control mid-episode. A dead finger reports itself through its `valid` column
+        instead, which is what that column is for.
+        """
         return self.bus.is_connected and all(cam.is_connected for cam in self.cameras.values())
 
     @check_if_already_connected
@@ -145,6 +228,24 @@ class OpenArmFollower(Robot):
         self.configure()
 
         self.bus.enable_torque()
+
+        if self.tactile is not None:
+            # Last, and never fatal unless the operator asked for that: by this
+            # point the arm is live and holding torque, so raising here would
+            # leave it energised with no disconnect path. `allow_missing=False`
+            # is the opt-in for unattended runs that must not start half-blind.
+            try:
+                self.tactile.connect()
+                if self.tactile.missing:
+                    logger.error(
+                        f"Tactile fingers configured but not opened: {sorted(self.tactile.missing)}. "
+                        "Their columns will be recorded as zeros with valid=0."
+                    )
+            except Exception as e:
+                if not self.config.tactile.allow_missing:
+                    self.disconnect()
+                    raise
+                logger.error(f"Tactile array failed to connect ({e}); continuing without it.")
 
         logger.info(f"{self} connected.")
 
@@ -232,20 +333,58 @@ class OpenArmFollower(Robot):
         for motor in self.bus.motors:
             state = states.get(motor, {})
             obs_dict[f"{motor}.pos"] = state.get("position", 0.0)
-            obs_dict[f"{motor}.vel"] = state.get("velocity", 0.0)
-            obs_dict[f"{motor}.torque"] = state.get("torque", 0.0)
+            if self.config.use_velocity_and_torque:
+                obs_dict[f"{motor}.vel"] = state.get("velocity", 0.0)
+                obs_dict[f"{motor}.torque"] = state.get("torque", 0.0)
 
         # Capture images from cameras
         for cam_key, cam in self.cameras.items():
-            start = time.perf_counter()
-            obs_dict[cam_key] = cam.read_latest()
-            dt_ms = (time.perf_counter() - start) * 1e3
-            logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
+            if getattr(cam, "use_rgb", True):
+                start = time.perf_counter()
+                obs_dict[cam_key] = cam.read_latest()
+                dt_ms = (time.perf_counter() - start) * 1e3
+                logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
+
+            if getattr(cam, "use_depth", False):
+                start = time.perf_counter()
+                obs_dict[f"{cam_key}_depth"] = cam.read_latest_depth()
+                dt_ms = (time.perf_counter() - start) * 1e3
+                logger.debug(f"{self} read {cam_key} depth: {dt_ms:.1f}ms")
+
+        # Tactile: one flat scalar per declared feature name, merged in alongside
+        # the motor keys. ~35 us for two fingers against a 33,300 us budget, and it
+        # never blocks -- the reader thread accumulates into a slot and this drains
+        # whatever is there, flagging valid=0 rather than waiting when it is empty.
+        if self.tactile is not None:
+            obs_dict.update(self._read_tactile())
 
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} get_observation took: {dt_ms:.1f}ms")
 
         return obs_dict
+
+    def _read_tactile(self) -> dict[str, float]:
+        """Flat tactile scalars for one tick, or an all-zero frame if that fails.
+
+        Never raises. This runs inside the record loop, and a driver bug that took
+        the loop down would lose the whole take -- whereas a frame of zeros with
+        `valid=0` is both recoverable and exactly what the status column exists to
+        express. The failure is logged once per occurrence, not once per frame at
+        30 Hz, because a flood of identical tracebacks is how you miss the first one.
+        """
+        from sensible_finger.integrations.lerobot import observation_frame
+
+        try:
+            values = observation_frame(self.tactile.read(), self.tactile.config)
+        except Exception as e:
+            if not self._tactile_read_failed:
+                self._tactile_read_failed = True
+                logger.exception(f"Tactile read failed ({e}); recording zeros with valid=0 from here on.")
+            return dict.fromkeys(self.tactile_value_names, 0.0)
+        if self._tactile_read_failed:
+            self._tactile_read_failed = False
+            logger.info("Tactile read recovered.")
+        return values
 
     @check_if_not_connected
     def send_action(
@@ -336,5 +475,14 @@ class OpenArmFollower(Robot):
         # Disconnect cameras
         for cam in self.cameras.values():
             cam.disconnect()
+
+        # Tactile last and guarded: releasing the arm's torque is the part of this
+        # teardown that must happen, and a MIDI port that refuses to close cannot be
+        # allowed to skip it. (It runs after the bus for the same reason.)
+        if self.tactile is not None:
+            try:
+                self.tactile.disconnect()
+            except Exception as e:
+                logger.warning(f"Tactile array failed to disconnect cleanly: {e}")
 
         logger.info(f"{self} disconnected.")

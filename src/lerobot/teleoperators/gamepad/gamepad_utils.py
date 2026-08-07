@@ -15,8 +15,22 @@
 # limitations under the License.
 
 import logging
+from typing import TYPE_CHECKING
+
+from lerobot.utils.import_utils import _hidapi_available, _pygame_available, require_package
+from lerobot.utils.keyboard_input import pynput_can_capture
 
 from ..utils import TeleopEvents
+
+if TYPE_CHECKING or _pygame_available:
+    import pygame
+else:
+    pygame = None  # type: ignore[assignment]
+
+if TYPE_CHECKING or _hidapi_available:
+    import hid
+else:
+    hid = None  # type: ignore[assignment]
 
 
 class InputController:
@@ -110,6 +124,15 @@ class KeyboardController(InputController):
 
     def start(self):
         """Start the keyboard listener."""
+        if not pynput_can_capture():
+            logging.warning(
+                "Keyboard control is unavailable in this environment. pynput cannot capture keys "
+                "on Wayland or headless machines, or on macOS without Accessibility / Input "
+                "Monitoring permission. Keyboard motion will be inactive."
+            )
+            self.running = False
+            return
+
         from pynput import keyboard
 
         def on_press(key):
@@ -199,6 +222,7 @@ class GamepadController(InputController):
     """Generate motion deltas from gamepad input."""
 
     def __init__(self, x_step_size=1.0, y_step_size=1.0, z_step_size=1.0, deadzone=0.1):
+        require_package("pygame", extra="gamepad")
         super().__init__(x_step_size, y_step_size, z_step_size)
         self.deadzone = deadzone
         self.joystick = None
@@ -206,8 +230,6 @@ class GamepadController(InputController):
 
     def start(self):
         """Initialize pygame and the gamepad."""
-        import pygame
-
         pygame.init()
         pygame.joystick.init()
 
@@ -230,8 +252,6 @@ class GamepadController(InputController):
 
     def stop(self):
         """Clean up pygame resources."""
-        import pygame
-
         if pygame.joystick.get_init():
             if self.joystick:
                 self.joystick.quit()
@@ -240,8 +260,6 @@ class GamepadController(InputController):
 
     def update(self):
         """Process pygame events to get fresh gamepad readings."""
-        import pygame
-
         for event in pygame.event.get():
             if event.type == pygame.JOYBUTTONDOWN:
                 if event.button == 3:
@@ -280,8 +298,6 @@ class GamepadController(InputController):
 
     def get_deltas(self):
         """Get the current movement deltas from gamepad state."""
-        import pygame
-
         try:
             # Read joystick axes
             # Left stick X and Y (typically axes 0 and 1)
@@ -307,39 +323,45 @@ class GamepadController(InputController):
             logging.error("Error reading gamepad. Is it still connected?")
             return 0.0, 0.0, 0.0
 
+    # ------------------------------------------------------------------
+    # Raw input accessors.
+    #
+    # get_deltas() above is the Cartesian-jog interface: three numbers, already
+    # scaled and inverted. The OpenArm gamepad teleoperators need the raw stick,
+    # button and D-pad state instead -- they map buttons to gripper, mode toggle
+    # and arm selection, none of which fit through a delta triple.
+    # ------------------------------------------------------------------
+
     def get_all_axes(self):
-            """Get all joystick axes values."""
-            if not self.joystick:
-                return [0.0] * 6
-            
-            axes = []
-            for i in range(self.joystick.get_numaxes()):
-                value = self.joystick.get_axis(i)
-                # Apply deadzone
-                if abs(value) < self.deadzone:
-                    value = 0.0
-                axes.append(value)
-            return axes
-    
+        """All joystick axes, deadzoned. Empty list if no joystick is attached."""
+        if not self.joystick:
+            return []
+        axes = []
+        for i in range(self.joystick.get_numaxes()):
+            value = self.joystick.get_axis(i)
+            axes.append(0.0 if abs(value) < self.deadzone else value)
+        return axes
+
     def get_axis(self, axis_index):
-        """Get a specific axis value."""
+        """One axis by index, deadzoned. 0.0 if the axis does not exist."""
         if not self.joystick or axis_index >= self.joystick.get_numaxes():
             return 0.0
         value = self.joystick.get_axis(axis_index)
         return value if abs(value) >= self.deadzone else 0.0
-    
+
     def get_button(self, button_index):
-        """Get a specific button state."""
+        """One button by index. False if the button does not exist."""
         if not self.joystick or button_index >= self.joystick.get_numbuttons():
             return False
         return self.joystick.get_button(button_index)
-    
+
     def get_hat(self):
-        """Get D-pad state (hat)."""
+        """D-pad as (x, y) in -1..1. (0, 0) if the controller has no hat."""
         if not self.joystick or self.joystick.get_numhats() == 0:
             return (0, 0)
         return self.joystick.get_hat(0)
-    
+
+
 class GamepadControllerHID(InputController):
     """Generate motion deltas from gamepad input using HIDAPI."""
 
@@ -358,6 +380,7 @@ class GamepadControllerHID(InputController):
             z_scale: Scaling factor for Z-axis movement
             deadzone: Joystick deadzone to prevent drift
         """
+        require_package("hidapi", extra="gamepad", import_name="hid")
         super().__init__(x_step_size, y_step_size, z_step_size)
         self.deadzone = deadzone
         self.device = None
@@ -372,10 +395,12 @@ class GamepadControllerHID(InputController):
         # Button states
         self.buttons = {}
 
+        # See get_button(): the HID path cannot honour numbered-button queries, and
+        # saying so on every call at 30 Hz would bury the log.
+        self._warned_unindexed = False
+
     def find_device(self):
         """Look for the gamepad device by vendor and product ID."""
-        import hid
-
         devices = hid.enumerate()
         for device in devices:
             device_name = device["product_string"]
@@ -389,8 +414,6 @@ class GamepadControllerHID(InputController):
 
     def start(self):
         """Connect to the gamepad using HIDAPI."""
-        import hid
-
         self.device_info = self.find_device()
         if not self.device_info:
             self.running = False
@@ -491,35 +514,43 @@ class GamepadControllerHID(InputController):
 
         return delta_x, delta_y, delta_z
 
+    # ------------------------------------------------------------------
+    # Raw input accessors, mirroring GamepadController's.
+    #
+    # Only the axes can be served faithfully here. _update() decodes the HID
+    # report into semantic flags (intervention, gripper, episode end) rather
+    # than a numbered button array, and the numbering a caller expects is
+    # pygame's, which is not the RumblePad's report layout. Guessing a mapping
+    # would produce a teleoperator that moves the arm on the wrong button, so
+    # these report their limitation instead.
+    # ------------------------------------------------------------------
+
     def get_all_axes(self):
-            """Get all joystick axes values."""
-            if not self.joystick:
-                return [0.0] * 6
-            
-            axes = []
-            for i in range(self.joystick.get_numaxes()):
-                value = self.joystick.get_axis(i)
-                # Apply deadzone
-                if abs(value) < self.deadzone:
-                    value = 0.0
-                axes.append(value)
-            return axes
-    
+        """The four decoded stick axes, already deadzoned by _update()."""
+        if not self.device:
+            return []
+        return [self.left_x, self.left_y, self.right_x, self.right_y]
+
     def get_axis(self, axis_index):
-        """Get a specific axis value."""
-        if not self.joystick or axis_index >= self.joystick.get_numaxes():
-            return 0.0
-        value = self.joystick.get_axis(axis_index)
-        return value if abs(value) >= self.deadzone else 0.0
-    
+        """One axis by index, in the same order as get_all_axes()."""
+        axes = self.get_all_axes()
+        return axes[axis_index] if 0 <= axis_index < len(axes) else 0.0
+
     def get_button(self, button_index):
-        """Get a specific button state."""
-        if not self.joystick or button_index >= self.joystick.get_numbuttons():
-            return False
-        return self.joystick.get_button(button_index)
-    
+        """Always False: see the note above. Warns once, then stays quiet."""
+        self._warn_unindexed()
+        return False
+
     def get_hat(self):
-        """Get D-pad state (hat)."""
-        if not self.joystick or self.joystick.get_numhats() == 0:
-            return (0, 0)
-        return self.joystick.get_hat(0)
+        """Always (0, 0): the HID report parser does not decode the D-pad."""
+        self._warn_unindexed()
+        return (0, 0)
+
+    def _warn_unindexed(self):
+        if not self._warned_unindexed:
+            self._warned_unindexed = True
+            logging.warning(
+                "GamepadControllerHID does not expose numbered buttons or the D-pad. "
+                "Teleoperators relying on them will see no button presses. Use the "
+                "pygame backend (GamepadController) if you need them."
+            )

@@ -18,8 +18,8 @@ from pathlib import Path
 
 import draccus
 
+from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.motors import MotorCalibration
-from lerobot.processor import RobotAction, RobotObservation
 from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, ROBOTS
 
 from .config import RobotConfig
@@ -111,6 +111,33 @@ class Robot(abc.ABC):
         Note: this property should be able to be called regardless of whether the robot is connected or not.
         """
         pass
+
+    @property
+    def extra_dataset_features(self) -> dict[str, dict]:
+        """
+        Dataset columns this robot contributes that cannot be expressed in
+        :pymeth:`observation_features`.
+
+        `observation_features` is converted by `hw_to_dataset_features`, which supports
+        exactly two kinds of value: a `float`, which becomes one element of the
+        concatenated `observation.state`, and a 3-tuple, which becomes an image. A
+        sensor producing a wide 1-D vector -- a tactile pad, a force/torque array, a
+        lidar scan -- fits neither and raises `ValueError` there.
+
+        Such a sensor returns a ready-made LeRobot feature spec here instead
+        (`{key: {"dtype", "shape", "names"}}`), which the recording script passes
+        straight to `combine_feature_dicts`. `build_dataset_frame` assembles any
+        float32 1-D feature it is given, so the column lands correctly without
+        widening `observation.state`.
+
+        Like the properties above, this must be answerable while disconnected, and it
+        must not depend on which hardware happened to be detected: a schema that
+        changes with cable seating produces two sessions of the same robot that cannot
+        be concatenated. Declare the columns; report absent hardware in the data.
+
+        Defaults to empty, so robots that do not need it are unaffected.
+        """
+        return {}
 
     @property
     @abc.abstractmethod

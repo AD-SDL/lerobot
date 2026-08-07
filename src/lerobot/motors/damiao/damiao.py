@@ -20,11 +20,10 @@ import logging
 import time
 from contextlib import contextmanager
 from copy import deepcopy
-from functools import cached_property
 from typing import TYPE_CHECKING, Any, TypedDict
 
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
-from lerobot.utils.import_utils import _can_available
+from lerobot.utils.import_utils import _can_available, require_package
 
 if TYPE_CHECKING or _can_available:
     import can
@@ -111,6 +110,7 @@ class DamiaoMotorsBus(MotorsBusBase):
             bitrate: Nominal bitrate in bps (default: 1000000 = 1 Mbps)
             data_bitrate: Data bitrate for CAN FD in bps (default: 5000000 = 5 Mbps), ignored if use_can_fd is False
         """
+        require_package("python-can", extra="damiao", import_name="can")
         super().__init__(port, motors, calibration)
         self.port = port
         self.can_interface = can_interface
@@ -257,18 +257,18 @@ class DamiaoMotorsBus(MotorsBusBase):
 
         if disable_torque:
             try:
-                # Send disable command multiple times for reliability
-                # This is necessary because:
-                # 1. CAN messages can be dropped
-                # 2. Motors (especially grippers) may be in transitional states
-                # 3. Ensures safety-critical disable succeeds
+                # Sent three times, not once. CAN frames can be dropped, and motors in a
+                # transitional state (the gripper especially) can miss the first one --
+                # which leaves an arm holding torque after we believe we have released it.
+                # disable_torque is idempotent, so the only cost of the extra sends is
+                # 100 ms on a teardown path.
                 for attempt in range(3):
                     self.disable_torque()
-                    if attempt < 2:  # No delay after last attempt
+                    if attempt < 2:
                         time.sleep(0.05)
             except Exception as e:
                 logger.warning(f"Failed to disable torque during disconnect: {e}")
-        
+
         if self.canbus:
             self.canbus.shutdown()
             self.canbus = None
@@ -861,7 +861,7 @@ class DamiaoMotorsBus(MotorsBusBase):
         else:
             raise ValueError(f"Motor {motor_obj} doesn't have a valid recv_id (None).")
 
-    @cached_property
+    @property
     def is_calibrated(self) -> bool:
         """Check if motors are calibrated."""
         return bool(self.calibration)

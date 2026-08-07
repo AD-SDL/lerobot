@@ -323,6 +323,44 @@ class GamepadController(InputController):
             logging.error("Error reading gamepad. Is it still connected?")
             return 0.0, 0.0, 0.0
 
+    # ------------------------------------------------------------------
+    # Raw input accessors.
+    #
+    # get_deltas() above is the Cartesian-jog interface: three numbers, already
+    # scaled and inverted. The OpenArm gamepad teleoperators need the raw stick,
+    # button and D-pad state instead -- they map buttons to gripper, mode toggle
+    # and arm selection, none of which fit through a delta triple.
+    # ------------------------------------------------------------------
+
+    def get_all_axes(self):
+        """All joystick axes, deadzoned. Empty list if no joystick is attached."""
+        if not self.joystick:
+            return []
+        axes = []
+        for i in range(self.joystick.get_numaxes()):
+            value = self.joystick.get_axis(i)
+            axes.append(0.0 if abs(value) < self.deadzone else value)
+        return axes
+
+    def get_axis(self, axis_index):
+        """One axis by index, deadzoned. 0.0 if the axis does not exist."""
+        if not self.joystick or axis_index >= self.joystick.get_numaxes():
+            return 0.0
+        value = self.joystick.get_axis(axis_index)
+        return value if abs(value) >= self.deadzone else 0.0
+
+    def get_button(self, button_index):
+        """One button by index. False if the button does not exist."""
+        if not self.joystick or button_index >= self.joystick.get_numbuttons():
+            return False
+        return self.joystick.get_button(button_index)
+
+    def get_hat(self):
+        """D-pad as (x, y) in -1..1. (0, 0) if the controller has no hat."""
+        if not self.joystick or self.joystick.get_numhats() == 0:
+            return (0, 0)
+        return self.joystick.get_hat(0)
+
 
 class GamepadControllerHID(InputController):
     """Generate motion deltas from gamepad input using HIDAPI."""
@@ -356,6 +394,10 @@ class GamepadControllerHID(InputController):
 
         # Button states
         self.buttons = {}
+
+        # See get_button(): the HID path cannot honour numbered-button queries, and
+        # saying so on every call at 30 Hz would bury the log.
+        self._warned_unindexed = False
 
     def find_device(self):
         """Look for the gamepad device by vendor and product ID."""
@@ -471,3 +513,44 @@ class GamepadControllerHID(InputController):
         delta_z = -self.right_y * self.z_step_size  # Up/down
 
         return delta_x, delta_y, delta_z
+
+    # ------------------------------------------------------------------
+    # Raw input accessors, mirroring GamepadController's.
+    #
+    # Only the axes can be served faithfully here. _update() decodes the HID
+    # report into semantic flags (intervention, gripper, episode end) rather
+    # than a numbered button array, and the numbering a caller expects is
+    # pygame's, which is not the RumblePad's report layout. Guessing a mapping
+    # would produce a teleoperator that moves the arm on the wrong button, so
+    # these report their limitation instead.
+    # ------------------------------------------------------------------
+
+    def get_all_axes(self):
+        """The four decoded stick axes, already deadzoned by _update()."""
+        if not self.device:
+            return []
+        return [self.left_x, self.left_y, self.right_x, self.right_y]
+
+    def get_axis(self, axis_index):
+        """One axis by index, in the same order as get_all_axes()."""
+        axes = self.get_all_axes()
+        return axes[axis_index] if 0 <= axis_index < len(axes) else 0.0
+
+    def get_button(self, button_index):
+        """Always False: see the note above. Warns once, then stays quiet."""
+        self._warn_unindexed()
+        return False
+
+    def get_hat(self):
+        """Always (0, 0): the HID report parser does not decode the D-pad."""
+        self._warn_unindexed()
+        return (0, 0)
+
+    def _warn_unindexed(self):
+        if not self._warned_unindexed:
+            self._warned_unindexed = True
+            logging.warning(
+                "GamepadControllerHID does not expose numbered buttons or the D-pad. "
+                "Teleoperators relying on them will see no button presses. Use the "
+                "pygame backend (GamepadController) if you need them."
+            )

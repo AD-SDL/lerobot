@@ -136,6 +136,7 @@ _hebi_available = is_package_available("hebi-py", import_name="hebi")
 _teleop_available = is_package_available("teleop")
 _placo_available = is_package_available("placo")
 _hidapi_available = is_package_available("hidapi", import_name="hid")
+_ikpy_available = is_package_available("ikpy")
 
 # Data / serialization
 _datasets_available = is_package_available("datasets")

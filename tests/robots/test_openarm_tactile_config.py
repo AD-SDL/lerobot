@@ -54,6 +54,38 @@ from lerobot.utils.feature_utils import (
 from lerobot.utils.visualization_utils import hidden_visualization_keys
 
 
+class _BuslessDamiao:
+    """Stands in for `DamiaoMotorsBus` so these tests need no CAN stack.
+
+    Every assertion in this file is a pure function of the config and the motors dict
+    the robot hands its bus. `DamiaoMotorsBus.__init__` nonetheless opens with
+    `require_package("python-can", ...)`, and `python-can` is in none of the four
+    dependency tiers `fast_tests.yml` installs. Without this stand-in the tests can only
+    run somewhere the CAN stack happens to be present -- a developer laptop -- and never
+    in the base-install tier, which is precisely the configuration
+    `test_disabled_tactile_contributes_nothing` exists to protect.
+
+    A `skipif` would be the smaller change and the wrong one: it would turn a red tick
+    into a silent hole in exactly the tier that matters.
+
+    Two details keep this faithful rather than merely quiet. `motors` is stored the way
+    `MotorsBus.__init__` stores it, so `_motors_ft` -- and therefore the
+    `observation.state` width asserted below -- is unaffected. And the keyword names are
+    spelled out instead of swallowed by `**kwargs`, so the robot renaming one still
+    fails here.
+    """
+
+    def __init__(self, *, port, motors, calibration, can_interface, use_can_fd, bitrate, data_bitrate):
+        self.port = port
+        self.motors = motors
+        self.calibration = calibration
+
+
+@pytest.fixture(autouse=True)
+def _bus_needs_no_can(monkeypatch):
+    monkeypatch.setattr("lerobot.robots.openarm_follower.openarm_follower.DamiaoMotorsBus", _BuslessDamiao)
+
+
 def _follower(**tactile_kwargs) -> OpenArmFollower:
     """A left OpenArm with velocity+torque, optionally with fingers. Touches no hardware."""
     config = OpenArmFollowerConfig(

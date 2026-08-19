@@ -15,11 +15,19 @@
 # limitations under the License.
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
 
 from lerobot.cameras import CameraConfig
 
 from ..config import RobotConfig
 
+if TYPE_CHECKING:
+    from sensible_finger.config import TactileConfig
+
+# Retuned against the physical arms at ANL: upstream's defaults are conservative
+# enough that the gamepad IK regularly hit a limit mid-reach. joint_1 is widened
+# asymmetrically (outward, away from the torso) because that is the direction the
+# arm actually needs; the inward bound is what stops it hitting its own base.
 LEFT_DEFAULT_JOINTS_LIMITS: dict[str, tuple[float, float]] = {
     "joint_1": (-120.0, 90.0),
     "joint_2": (-90.0, 90.0),
@@ -41,6 +49,120 @@ RIGHT_DEFAULT_JOINTS_LIMITS: dict[str, tuple[float, float]] = {
     "joint_7": (-90.0, 90.0),
     "gripper": (-65.0, 0.0),
 }
+
+
+@dataclass
+class OpenArmTactileConfig:
+    """Optional Sensible Robotics tactile fingers mounted on this arm.
+
+    Disabled unless ``sides`` is non-empty, so every existing OpenArm config keeps
+    recording exactly the schema it records today. There are several arms in the lab
+    and only two fingers, so opt-in is the only workable default.
+
+    This mirrors a subset of ``sensible_finger.config.TactileConfig`` rather than
+    embedding it. LeRobot has to be installable and CLI-parseable on a machine with
+    no tactile package at all, and draccus resolves field annotations at parse time
+    -- so the annotation cannot name a type that may be absent. The mirror is kept
+    honest by ``tests/robots/test_openarm_tactile_config.py``, which asserts every
+    field here still exists on the real config with the same default.
+
+    Per-finger tuning (``sample_policy``, ``stale_after_s``, ``tare_frames``,
+    ``tare_max_p2p``) is deliberately array-wide here: they are identical hardware,
+    and a CLI surface for tuning them independently is a surface for setting them
+    inconsistently by accident. Construct ``TactileConfig`` directly if you need it.
+
+    Example:
+        ``--robot.tactile.sides='[left,right]' --robot.tactile.port_indices='{left: 1, right: 3}'``
+    """
+
+    #: Finger names, in dataset column order. Empty disables tactile entirely.
+    #: Each becomes ``observation.tactile.<side>``, so renaming one orphans data.
+    sides: list[str] = field(default_factory=list)
+
+    #: side -> MIDI port name or substring. Usually unnecessary: the binding file
+    #: written by ``sensible-finger bind`` is consulted automatically.
+    ports: dict[str, str] = field(default_factory=dict)
+
+    #: side -> rtmidi port index. Authoritative when set, and the only thing that
+    #: works on macOS with two fingers, where both enumerate under the same name
+    #: and cannot be told apart by string matching.
+    port_indices: dict[str, int] = field(default_factory=dict)
+
+    #: ``"separate"`` keeps ``observation.state`` at its usual width and gives each
+    #: finger its own columns; ``"merge_state"`` widens ``observation.state`` so
+    #: stock policies consume tactile with no processor step, at the cost of making
+    #: those episodes untrainable alongside non-tactile ones. Choose per training
+    #: run, not per recording -- ``separate`` records a superset.
+    tactile_mode: str = "separate"
+
+    #: ``"real"`` | ``"replay"`` | ``"fake"`` | ``"mock"``. Overridable by
+    #: ``SENSIBLE_FINGER_BACKEND``, which warns loudly every time it fires.
+    backend: str = "real"
+
+    #: Keep going when a finger cannot be opened; its columns are zeros with
+    #: ``valid=0``. Set False for unattended runs, where silently recording one
+    #: finger's worth of a two-finger task is worse than not starting.
+    allow_missing: bool = True
+
+    record_baseline: bool = True
+    record_status: bool = True
+    record_derived: bool = True
+
+    sample_policy: str = "max"
+    stale_after_s: float = 0.05
+    tare_frames: int = 64
+    tare_max_p2p: float = 50.0
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.sides)
+
+    def build(self) -> "tuple[TactileConfig, dict[str, dict[str, Any]]]":
+        """Construct the real ``TactileConfig`` plus per-side reader kwargs.
+
+        Imported lazily so that ``sensible_finger`` is required only by arms that
+        actually declare fingers.
+
+        Returns:
+            The tactile config and the ``reader_kwargs`` mapping to hand
+            ``TactileArray``; the latter carries ``port_index``, which is not a
+            ``FingerConfig`` field because it is a property of this host's USB
+            enumeration rather than of the finger.
+        """
+        from sensible_finger.config import FingerConfig, TactileConfig
+
+        # A typo'd side here would otherwise be silently ignored, and the finger it
+        # was meant to pin would fall back to enumeration order -- i.e. the exact
+        # left/right swap the port_indices are there to prevent.
+        unknown = (set(self.ports) | set(self.port_indices)) - set(self.sides)
+        if unknown:
+            raise ValueError(
+                f"tactile ports/port_indices name sides that are not configured: "
+                f"{sorted(unknown)}; configured sides are {self.sides}"
+            )
+
+        fingers = [
+            FingerConfig(
+                side=side,
+                port=self.ports.get(side),
+                sample_policy=self.sample_policy,
+                stale_after_s=self.stale_after_s,
+                tare_frames=self.tare_frames,
+                tare_max_p2p=self.tare_max_p2p,
+            )
+            for side in self.sides
+        ]
+        config = TactileConfig(
+            fingers=fingers,
+            tactile_mode=self.tactile_mode,
+            backend=self.backend,
+            allow_missing=self.allow_missing,
+            record_baseline=self.record_baseline,
+            record_status=self.record_status,
+            record_derived=self.record_derived,
+        )
+        reader_kwargs = {side: {"port_index": idx} for side, idx in self.port_indices.items()}
+        return config, reader_kwargs
 
 
 @dataclass
@@ -66,12 +188,19 @@ class OpenArmFollowerConfigBase:
     # Whether to disable torque when disconnecting
     disable_torque_on_disconnect: bool = True
 
+    # When True, expose `.vel` and `.torque` per motor in observation features.
+    # Default False for compatibility with the position-only openarm_mini teleoperator.
+    use_velocity_and_torque: bool = False
+
     # Safety limit for relative target positions
     # Set to a positive scalar for all motors, or a dict mapping motor names to limits
     max_relative_target: float | dict[str, float] | None = None
 
     # Camera configurations
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
+
+    # Optional tactile fingers. Off unless `tactile.sides` is non-empty.
+    tactile: OpenArmTactileConfig = field(default_factory=OpenArmTactileConfig)
 
     # Motor configuration for OpenArms (7 DOF per arm)
     # Maps motor names to (send_can_id, recv_can_id, motor_type)
@@ -115,13 +244,6 @@ class OpenArmFollowerConfigBase:
         }
     )
 
-    def __post_init__(self):
-        """Apply side-specific joint limits if side is specified."""
-        if self.side == "left":
-            self.joint_limits = LEFT_DEFAULT_JOINTS_LIMITS.copy()
-        elif self.side == "right":
-            self.joint_limits = RIGHT_DEFAULT_JOINTS_LIMITS.copy()
-        # If side is None, keep the default safety limits
 
 @RobotConfig.register_subclass("openarm_follower")
 @dataclass

@@ -58,7 +58,7 @@ class OpenArmLeaderConfigBase:
 
     # Torque mode settings for manual control
     # When enabled, motors have torque disabled for manual movement
-    manual_control: bool = True
+    manual_control: bool = False
 
     # TODO(Steven, Pepijn): Not used ... ?
     # MIT control parameters (used when manual_control=False for torque control)

@@ -58,7 +58,7 @@ class OpenArmLeaderConfigBase:
 
     # Torque mode settings for manual control
     # When enabled, motors have torque disabled for manual movement
-    manual_control: bool = False
+    manual_control: bool = True
 
     # When True, expose `.vel` and `.torque` per motor in action features.
     # Default False for compatibility with the position-only openarm_mini teleoperator.

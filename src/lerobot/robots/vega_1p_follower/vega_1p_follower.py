@@ -13,6 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 from __future__ import annotations
 
 import logging
@@ -82,12 +83,11 @@ class Vega1PFollower(Robot):
             for comp, joints in VEGA_JOINTS.items()
             if getattr(config, f"with_{comp}")
         }
+
         self.cameras: dict[str, tuple[str, str | None, int]] = {
             key: spec for key, spec in VEGA_CAMERAS.items() if getattr(config, f"with_{key}")
         }
 
-        # Last good frame per camera, and how many misses in a row since it. Used
-        # to ride out a dropped frame without writing a blank into the dataset.
         self._last_frame: dict[str, np.ndarray] = {}
         self._stale_counts: dict[str, int] = dict.fromkeys(self.cameras, 0)
 
@@ -151,7 +151,6 @@ class Vega1PFollower(Robot):
     def connect(self, calibrate: bool = True) -> None:
         from dexcontrol.robot import Robot as DexRobot
 
-        # The variant (vega_1p_f5d6) is resolved by dexcontrol from ROBOT_NAME.
         self.robot = DexRobot()
 
         available = set(self.robot.get_controllable_component_map())
@@ -360,6 +359,12 @@ class Vega1PFollower(Robot):
 
         goal_pos = {k: float(v) for k, v in action.items() if k.endswith(".pos")}
 
+        # Another process is driving (e.g. omniteleop's robot_controller). Everything
+        # below only exists to build a command we would then throw away, and it costs a
+        # full joint read per component per step -- so stop here.
+        if self.config.use_external_commands:
+            return dict(goal_pos)
+
         if self.config.max_relative_target is not None:
             present = self._get_state()
             goal_pos = ensure_safe_goal_position(
@@ -380,9 +385,6 @@ class Vega1PFollower(Robot):
         sent: RobotAction = dict(goal_pos)
 
         # *** TBD: chassis
-
-        if self.config.use_external_commands:
-            return sent
 
         if joint_pos:
             self.robot.set_joint_pos(joint_pos)

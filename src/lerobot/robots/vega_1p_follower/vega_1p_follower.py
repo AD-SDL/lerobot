@@ -149,9 +149,20 @@ class Vega1PFollower(Robot):
         return self.robot is not None and not self.robot.is_shutdown()
 
     def connect(self, calibrate: bool = True) -> None:
+        from dexcontrol.config import get_robot_config
         from dexcontrol.robot import Robot as DexRobot
 
-        self.robot = DexRobot()
+        # The variant (vega_1p_f5d6) is resolved by dexcontrol from ROBOT_NAME.
+        # dexcontrol sensors default to disabled, so enable the ones this follower
+        # is configured to read -- otherwise has_sensor() is False and
+        # _check_sensors() below fails even when the publisher is streaming.
+        dex_config = get_robot_config()
+        needed_sensors = {dex for dex, _, _ in self.cameras.values()}
+        if self.config.with_head_imu:
+            needed_sensors.add("head_imu")
+        for name in sorted(needed_sensors):
+            dex_config.enable_sensor(name)
+        self.robot = DexRobot(configs=dex_config)
 
         available = set(self.robot.get_controllable_component_map())
         missing = set(self.components) - available

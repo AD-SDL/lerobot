@@ -48,8 +48,8 @@ class Vega1PFollowerConfig(RobotConfig):
     with_right_wrist_camera: bool = False
     with_head_imu: bool = True
 
-    head_camera_height: int = 720
-    head_camera_width: int = 1280
+    head_camera_height: int = 600
+    head_camera_width: int = 960
     wrist_camera_height: int = 720
     wrist_camera_width: int = 1280
 

@@ -87,6 +87,10 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> "Teleoperator":
         from .reachy2_teleoperator import Reachy2Teleoperator
 
         return Reachy2Teleoperator(config)
+    elif config.type == "vega_exo_joycon":
+        from .vega_exo_joycon import VegaExoJoycon
+
+        return VegaExoJoycon(config)
     elif config.type == "openarm_leader":
         from .openarm_leader import OpenArmLeader
 

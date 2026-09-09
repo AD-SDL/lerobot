@@ -100,6 +100,7 @@ from lerobot.robots import (  # noqa: F401
     rebot_b601_follower,
     so_follower,
     unitree_g1 as unitree_g1_robot,
+    vega_1p_follower,
 )
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
@@ -121,6 +122,7 @@ from lerobot.teleoperators import (  # noqa: F401
     rebot_102_leader,
     so_leader,
     unitree_g1,
+    vega_exo_joycon,
 )
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.robot_utils import precise_sleep

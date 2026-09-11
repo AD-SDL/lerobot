@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 # arm actually needs; the inward bound is what stops it hitting its own base.
 LEFT_DEFAULT_JOINTS_LIMITS: dict[str, tuple[float, float]] = {
     "joint_1": (-120.0, 90.0),
-    "joint_2": (-90.0, 90.0),
+    "joint_2": (-90.0, 10.0),
     "joint_3": (-90.0, 90.0),
     "joint_4": (0.0, 135.0),
     "joint_5": (-90.0, 90.0),
@@ -41,7 +41,7 @@ LEFT_DEFAULT_JOINTS_LIMITS: dict[str, tuple[float, float]] = {
 
 RIGHT_DEFAULT_JOINTS_LIMITS: dict[str, tuple[float, float]] = {
     "joint_1": (-90.0, 120.0),
-    "joint_2": (-90.0, 90.0),
+    "joint_2": (-10.0, 90.0),
     "joint_3": (-90.0, 90.0),
     "joint_4": (0.0, 135.0),
     "joint_5": (-90.0, 90.0),

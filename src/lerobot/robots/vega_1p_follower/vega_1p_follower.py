@@ -152,10 +152,6 @@ class Vega1PFollower(Robot):
         from dexcontrol.config import get_robot_config
         from dexcontrol.robot import Robot as DexRobot
 
-        # The variant (vega_1p_f5d6) is resolved by dexcontrol from ROBOT_NAME.
-        # dexcontrol sensors default to disabled, so enable the ones this follower
-        # is configured to read -- otherwise has_sensor() is False and
-        # _check_sensors() below fails even when the publisher is streaming.
         dex_config = get_robot_config()
         needed_sensors = {dex for dex, _, _ in self.cameras.values()}
         if self.config.with_head_imu:
@@ -169,21 +165,17 @@ class Vega1PFollower(Robot):
         if self.config.with_chassis and "chassis" not in available:
             missing.add("chassis")
         if missing:
-            self.robot.shutdown()
-            self.robot = None
-            raise ConnectionError(
+            self._fail(
                 f"{self} is configured for {sorted(missing)}, which the robot does not report as "
                 f"controllable. Available: {sorted(available)}. Either fix the hardware or turn the "
                 f"corresponding with_* flags off -- but note that changing them changes the recorded "
-                f"feature vector."
+                f"feature vector."                      
             )
 
         for comp, declared in self.components.items():
             actual = getattr(self.robot, comp).joint_name
             if list(actual) != declared:
-                self.robot.shutdown()
-                self.robot = None
-                raise ConnectionError(
+                self._fail(
                     f"Joint-name mismatch for '{comp}'. VEGA_JOINTS declares {declared} but the robot "
                     f"reports {list(actual)}. Update VEGA_JOINTS to match the hardware."
                 )
@@ -241,8 +233,7 @@ class Vega1PFollower(Robot):
             self._last_frame[key] = frame
             self._stale_counts[key] = 0
 
-    def configure(self) -> None:
-        # Set any hardware configuration.
+    def configure(self) -> None: # Set any hardware configuration.
         pass
 
     @property

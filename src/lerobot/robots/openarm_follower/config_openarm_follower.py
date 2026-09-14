@@ -190,7 +190,7 @@ class OpenArmFollowerConfigBase:
 
     # When True, expose `.vel` and `.torque` per motor in observation features.
     # Default False for compatibility with the position-only openarm_mini teleoperator.
-    use_velocity_and_torque: bool = False
+    use_velocity_and_torque: bool = True
 
     # Safety limit for relative target positions
     # Set to a positive scalar for all motors, or a dict mapping motor names to limits

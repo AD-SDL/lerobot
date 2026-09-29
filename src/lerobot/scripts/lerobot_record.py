@@ -296,6 +296,7 @@ def record_loop(
 
         # Get robot observation
         obs = robot.get_observation()
+        t_after_obs = time.perf_counter()
 
         # Applies a pipeline to the raw robot observation, default is IdentityProcessor
         obs_processed = robot_observation_processor(obs)
@@ -338,12 +339,14 @@ def record_loop(
         # so action actually sent is saved in the dataset. action = postprocessor.process(action)
         # TODO(steven, pepijn, adil): we should use a pipeline step to clip the action, so the sent action is the action that we input to the robot.
         _sent_action = robot.send_action(robot_action_to_send)
+        t_after_action = time.perf_counter()
 
         # Write to dataset
         if dataset is not None:
             action_frame = build_dataset_frame(dataset.features, action_values, prefix=ACTION)
             frame = {**observation_frame, **action_frame, "task": single_task}
             dataset.add_frame(frame)
+        t_after_add = time.perf_counter()
 
         if display_data:
             log_visualization_data(
@@ -358,8 +361,19 @@ def record_loop(
 
         sleep_time_s: float = control_interval - dt_s
         if sleep_time_s < 0:
+            # Break the overrun down by phase so the bottleneck is unambiguous:
+            # obs = get_observation (joint + camera + IMU zenoh fetches),
+            # act = teleop.get_action + processors + send_action,
+            # add = dataset.add_frame (blocks when the video-encoder queue is full).
+            obs_ms = (t_after_obs - start_loop_t) * 1e3
+            act_ms = (t_after_action - t_after_obs) * 1e3
+            add_ms = (t_after_add - t_after_action) * 1e3
             logging.warning(
-                f"Record loop is running slower ({1 / dt_s:.1f} Hz) than the target FPS ({fps} Hz). Dataset frames might be dropped and robot control might be unstable. Common causes are: 1) Camera FPS not keeping up 2) Policy inference taking too long 3) CPU starvation"
+                f"Record loop is running slower ({1 / dt_s:.1f} Hz) than the target FPS ({fps} Hz). "
+                f"Phase breakdown: obs={obs_ms:.0f}ms act={act_ms:.0f}ms add_frame={add_ms:.0f}ms. "
+                f"Dataset frames might be dropped and robot control might be unstable. Common causes are: "
+                f"1) Camera FPS not keeping up (obs high) 2) Policy inference taking too long "
+                f"3) CPU starvation 4) Video encoder queue backpressure (add_frame high)"
             )
 
         precise_sleep(max(sleep_time_s, 0.0))

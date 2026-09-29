@@ -164,6 +164,21 @@ class Vega1PFollower(Robot):
             dex_config.enable_sensor(name)
         self.robot = DexRobot(configs=dex_config)
 
+        # dexcontrol wraps every subscriber in an AUTO idle policy: after
+        # DEFAULT_IDLE_TIMEOUT (5s) with no reads it pauses the subscriber, and the
+        # next read blocks up to DEFAULT_RESUME_TIMEOUT (3s) polling for a fresh
+        # frame. The record loop reads continuously *within* an episode (well under
+        # 5s), but the reset/encode pause BETWEEN episodes is minutes long, so every
+        # subscriber gets paused and episode N>0's first frame pays the resume gap --
+        # a one-shot obs spike (~0.4s, add_frame~1ms) that shows up as a scary
+        # "Record loop is running slower (2-3 Hz)" warning on frame 1 only. Pin
+        # always_on so subscribers stay warm across resets and every episode starts
+        # at full rate. Skips safety components (battery/estop) internally. The cost
+        # is cameras keep decoding during the reset pause (negligible; they stream
+        # regardless). Safe because use_external_commands=true means this DexRobot is
+        # read-only -- robot_controller in omniteleop is the sole hardware writer.
+        self.robot.set_subscription_policy("always_on")
+
         available = set(self.robot.get_controllable_component_map())
         missing = set(self.components) - available
         if self.config.with_chassis and "chassis" not in available:

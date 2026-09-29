@@ -172,6 +172,7 @@ from lerobot.robots import (  # noqa: F401
     rebot_b601_follower,
     so_follower,
     unitree_g1 as unitree_g1_robot,
+    vega_1p_follower,  # noqa: F401  registers @RobotConfig.register_subclass("vega_1p_follower")
 )
 from lerobot.rollout import RolloutConfig, build_rollout_context, create_strategy
 from lerobot.teleoperators import (  # noqa: F401

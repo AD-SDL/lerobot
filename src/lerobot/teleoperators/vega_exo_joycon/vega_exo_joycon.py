@@ -32,38 +32,45 @@ logger = logging.getLogger(__name__)
 
 
 class VegaExoJoycon(Teleoperator):
-    """Dexmate exoskeleton + JoyCon rig, read off the omniteleop zenoh pipeline.
-
-    omniteleop runs as four processes glued together by dexcomm/zenoh::
-
-        arm_reader ────exo/joints────┐
-                                     ├→ command_processor ──robot/safe_commands──→ robot_controller → Vega
-        joycon_reader ──exo/joycon───┘          ▲                                          │
-                                                └────────── robot/joints ──────────────────┘
-
-    `robot/safe_commands` carries exactly what a LeRobot action is: absolute joint targets
-    in radians, already retargeted from the exoskeleton, torso-pitch compensated,
-    joint-limited and collision-checked. This class subscribes to that topic and reshapes
-    it into the flat ``{"<joint>.pos": float}`` dict that :class:`Vega1PFollower` declares.
-
-    It never commands the robot; `robot_controller.py` keeps doing that at 100 Hz with its
-    ruckig interpolation, Butterworth filtering and JoyCon e-stop intact. Pair it with
-    ``--robot.use_external_commands=true`` so LeRobot records without also commanding.
-
-    The exoskeleton is a 1:1 kinematic replica, so there is no software calibration: the
-    operator holds it in the robot's pose before the stack launches.
     """
+    LeRobot Teleoperator class for the Dexmate Vega exoskeleton/JoyCon rig.
 
+        LeRobot only subscribes to DexComm topics to record actions. Control is completely handled by DexComm/DexControl/omniteleop, 
+        so any calibration/configuration is manually performed by the teleoperator. All feedback-methods are similarly no-op
+        since LeRobot will not be sending any actions to the exoskeleton.
+
+    Class Attributes:
+        config_class: TeleoperatorConfig     = (Inherited from Teleoperator) the expected configuration class for this teleoperator.
+        name:         string                 = (Inherited from Teleoperator) the unique name used to identify this teleoperator.
+
+    Instance Attributes:
+        config:       VegaExoJoyconConfig    = The specific configuration instance of this teleoperator set by the user.
+        components:   dict[str, list[str]]   = Dictionary mapping each component name (enabled in `VegaExoJoyconConfig`) to a list of the component's joints' names.
+        _node:        Any | None             = The DexComm node used by our LeRobot teleoperator to communicate with the robot
+        _subscribers: list[Any]              = The DexComm node subscribers for joint-feedback and command topics.
+        _lock:        threading.Lock         = Thread lock protecting shared data written by subscriber callback threads and read by `get_action()`.
+        _command:     dict[str, Any] | None  = Last message sent from `robot/safe_commands` topic.
+        _command_at:  float                  = Monotonic timestamp of the most recent command message.
+        _joints:      dict[str, list[float]] = Most recent `robot/joints` feedback, used to fill in missing command components.
+        _last_action: RobotAction            = Last complete (LeRobot) action returned by `get_action()`, final fallback for missing components.
+    """
     config_class = VegaExoJoyconConfig
     name = "vega_exo_joycon"
 
-    def __init__(self, config: VegaExoJoyconConfig):
+    def __init__(
+            self, 
+            config: VegaExoJoyconConfig
+        ):
+        """
+        Create the class instance and initialize attributes with default values and/or specified config presets.
+
+        Inputs:
+            config: VegaExoJoyconConfig = The specific configuration instance of this teleoperator set by the user.
+        """
         super().__init__(config)
 
         self.config = config
 
-        # Filtered against the same joint table the follower uses, so the two key sets
-        # cannot drift apart.
         self.components: dict[str, list[str]] = {
             comp: joints for comp, joints in VEGA_JOINTS.items() if getattr(config, f"with_{comp}")
         }
@@ -71,7 +78,6 @@ class VegaExoJoycon(Teleoperator):
         self._node: Any | None = None
         self._subscribers: list[Any] = []
 
-        # Written from zenoh callback threads, read by get_action().
         self._lock = threading.Lock()
         self._command: dict[str, Any] | None = None
         self._command_at: float = 0.0
@@ -81,40 +87,89 @@ class VegaExoJoycon(Teleoperator):
 
     @property
     def action_features(self) -> dict[str, type]:
-        """Flat ``{"<joint>.pos": float}``, matching `Vega1PFollower.action_features`."""
+        """
+        Creates a dictionary mapping the action feature key to the data type, i.e., describes the action feature schema.
+            E.x. {"joint_keyname.pos": float ...}
+        """
         return {f"{joint}.pos": float for joints in self.components.values() for joint in joints}
 
     @property
     def feedback_features(self) -> dict[str, type]:
-        """Empty: `robot_controller` owns `robot/joints`, and it may only have one writer."""
+        """
+        Creates a dictionary mapping the feedback feature key to the data type, i.e., describes the feedback feature schema.
+            
+            Property is required by LeRobot but is a no-op for this teleoperator, since LeRobot is just reading commands from omniteleop and recording them as RobotActions,
+            and not actually actuating anything.
+        """
         return {}
 
     @property
     def is_connected(self) -> bool:
+        """
+        Determines whether the LeRobot teleoperator has successfully connected to the robot.
+
+        `is_connected` condition only True when both:
+            1. DexComm node has been created (not None).
+            2. The latest command is not older than `max_command_age_s` config parameter.
+        """
         return self._node is not None and self._command_age() <= self.config.max_command_age_s
 
     def _command_age(self) -> float:
+        """
+        Returns the difference in seconds between now and the last stored message from `robot/safe_commands`, 
+        or infinity if no previous command. 
+        
+            Ensures that DexComm is continually publishing to its subscribers.
+        """
         with self._lock:
             if self._command is None:
                 return float("inf")
             return time.monotonic() - self._command_at
 
     def _on_command(self, data: dict[str, Any]) -> None:
+        """
+        Callback invoked when a message arrives on `robot/safe_commands`. Stores the latest command and its timestamp.
+
+        Inputs:
+            data: `dict[str, Any]` = The message received from command stream. 
+                E.x. `data = {"components": {"left_arm": {"pos": [...],},},}`
+        """
         with self._lock:
             self._command = data
             self._command_at = time.monotonic()
 
     def _on_joints(self, data: dict[str, Any]) -> None:
+        """
+        Callback invoked when a message arrives on `robot/joints`. 
+        Stores the measured joint positions as a fallback for any missing components in command messages.
+        
+        Inputs:
+            data: `dict[str, Any]` = The message received from joint stream. 
+                E.x. `data = {"joints": {"left_arm": [pos1.float, ...],},}`
+        """
         joints = data.get("joints")
         if isinstance(joints, dict):
             with self._lock:
                 self._joints = joints
 
     def connect(self, calibrate: bool = True) -> None:
+        """
+        Connect the LeRobot teleoperator to the omniteleop DexComm pipeline.
+
+        Creates a DexComm `Node` for the LeRobot exoskeleton teleoperator called `"lerobot_vega_exo_teleop"`.
+        Creates two subscribers on the node for the `robot/safe_commands` and `robot/joints` streams.
+
+        Function blocks until omniteleop starts publishing (`command_processor` is silent until 
+            1. The exoskeleton matches the actual robot pose (within some tolerance) and
+            2. The current user releases the JoyCon e-stop).
+
+        Inputs:
+            calibrate: bool = Argument required by LeRobot but no-op in this implementation since calibration is user/omniteleop controlled.
+        """
         if self._node is not None:
             raise DeviceAlreadyConnectedError(f"{self} is already connected.")
 
-        # Imported lazily so LeRobot stays importable without the Dexmate stack.
+        # Importing DexComm from inside the function so LeRobot is still installable without requiring entire Dexmate ecosystem.
         from dexcomm import Node
         from dexcomm.codecs import DictDataCodec
 
@@ -133,11 +188,9 @@ class VegaExoJoycon(Teleoperator):
         logger.info(f"{self} connected.")
 
     def _await_first_command(self) -> None:
-        """Block until omniteleop starts publishing.
-
-        `command_processor` stays silent until the exoskeleton is within 1 rad of the
-        robot's current pose and the operator has released the JoyCon e-stop, so this wait
-        is expected and can take a while.
+        """
+        Waits for omniteleop to start publishing to determine if the LeRobot teleoperator connection was successful.
+        Continuously loops until either a command message is stored or it times out (set by `connect_timeout_s` config parameter.)
         """
         deadline = time.monotonic() + self.config.connect_timeout_s
         next_log = time.monotonic() + 5.0
@@ -162,28 +215,38 @@ class VegaExoJoycon(Teleoperator):
             time.sleep(0.05)
 
     def configure(self) -> None:
+        """
+        Defines behavior to apply any one-time or runtime configuration to the teleoperator.
+        Class method required by LeRobot but no-op in this implementation.
+        """
         pass
 
     @property
     def is_calibrated(self) -> bool:
+        """
+        Describes whether the teleoperator is currently calibrated or not, or always True if not applicable.
+        Always returns True because calibration is performed manually by the operator and is not controlled by LeRobot.
+        """
         return True
 
     def calibrate(self) -> None:
+        """
+        Calibrates the teleoperator if applicable, or else no-op. Class method required by LeRobot.
+        """
         pass
 
     @check_if_not_connected
     def get_action(self) -> RobotAction:
-        """Latest exoskeleton targets as a flat action dict.
-
-        Non-blocking: it reshapes whatever the last `robot/safe_commands` message held. A
-        command carries only what the operator's current JoyCon mode touches, but the
-        dataset needs every component on every frame, so components absent from that
-        message fall back to the robot's joint feedback, then to the last value emitted.
+        """
+        Converts the stored messages from `robot/safe_commands` (nested dictionary) to flattened `RobotAction`.
+            1. First checks the last stored message in `_command`.
+            2. Then falls back to last measured joint position information in `_joints` to fill in any missing components or information.
+            3. If information is still missing, final fallback to the last completed `RobotAction` from `_last_action`).
         """
         with self._lock:
             command = self._command
             joints = self._joints
-        assert command is not None  # is_connected implies a command arrived
+        assert command is not None  
 
         commanded = command.get("components", {})
         action: RobotAction = {}
@@ -206,8 +269,6 @@ class VegaExoJoycon(Teleoperator):
                 action.update({key: self._last_action[key] for key in keys})
                 continue
 
-            # Hand DOF count varies by variant (6 for f5d6, 1 for a gripper), and zip()
-            # would silently truncate into a plausible but wrong action column.
             if len(pos) != len(names):
                 raise ValueError(
                     f"'{source}' gave {len(pos)} values for '{comp}' but {self} expects "
@@ -220,14 +281,14 @@ class VegaExoJoycon(Teleoperator):
         return action
 
     def send_feedback(self, feedback: dict[str, Any]) -> None:
+        """
+        Class method required by LeRobot; no-op in this implementation.
+        """
         pass
 
     def _teardown(self) -> None:
-        """Drop the subscribers without touching the shared zenoh session.
-
-        dexcomm's session is process-local and shared with the follower's
-        `dexcontrol.Robot`, so cleaning it up here would take the follower's comms down
-        with it.
+        """
+        Removes the LeRobot subscribers and clears the node without interfering with communication on the DexComm control side.
         """
         for subscriber in self._subscribers:
             close = getattr(subscriber, "undeclare", None) or getattr(subscriber, "close", None)
@@ -245,6 +306,11 @@ class VegaExoJoycon(Teleoperator):
             self._last_action = {}
 
     def disconnect(self) -> None:
+        """
+        Disconnects the node (LeRobot teleoperator). Considered disconnected if either:
+            1. Node failed to connect (initialized as None until connected) or
+            2. If the node was connected, disconnects the subscribers and clears the node and related attributes.
+        """
         if self._node is None:
             return
         self._teardown()

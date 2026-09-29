@@ -348,14 +348,14 @@ def build_rollout_context(
     observation_features_hw = {
         k: v
         for k, v in all_obs_features.items()
-        if isinstance(v, tuple) or (v is float and k.endswith((".pos", ".vel")))
+        if isinstance(v, tuple) or (v is float and k.endswith((".pos", ".vel", ".torque"))) # Add torque back into the observation features to match prev policy dimensions.
     }
     # Keep both joint-position (.pos) and base-velocity (.vel) action features so
     # mobile manipulators command the base too (e.g. LeKiwi: 6 arm .pos +
     # x/y/theta.vel = 9-dim action). Pure-arm robots have no .vel keys, so this is
     # a no-op for them. Without the .vel keys the base velocities are silently
     # dropped from dataset_features[ACTION]/ordered_action_keys and the base never moves.
-    action_features_hw = {k: v for k, v in robot.action_features.items() if k.endswith((".pos", ".vel"))}
+    action_features_hw = {k: v for k, v in robot.action_features.items() if k.endswith((".pos", ".vel", ".torque"))}
 
     # The action side is always needed: sync inference reads action names from
     # ``dataset_features[ACTION]`` to map policy tensors back to robot actions.

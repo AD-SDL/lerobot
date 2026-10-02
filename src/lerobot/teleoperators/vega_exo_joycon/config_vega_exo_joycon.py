@@ -35,10 +35,7 @@ class VegaExoJoyconConfig(TeleoperatorConfig):
     with_right_hand: bool = False
     with_head: bool = True
     with_torso: bool = True
-
-    # Mobile base velocity (base.vx/vy/wz). Must match the follower's with_chassis so
-    # the recorded action schemas agree (enforced by check_exo_lerobot_contract.py).
-    with_chassis: bool = False
+    with_chassis: bool = True # Mobile base velocity (base.vx/vy/wz).
 
     # Zenoh topics, which can be found in the `topics` block of the active `omniteleop` config file (`src/omniteleop/configs/<ROBOT_CONFIG>.yaml`).
     # The `ROBOT_NAME` prefix is applied by DexComm, so the topic names stay relative.

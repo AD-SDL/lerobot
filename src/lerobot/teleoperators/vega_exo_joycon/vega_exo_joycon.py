@@ -21,7 +21,7 @@ import time
 from typing import Any
 
 from lerobot.lerobot_types import RobotAction
-from lerobot.robots.vega_1p_follower.vega_1p_follower import VEGA_JOINTS
+from lerobot.robots.vega_1p_follower.vega_1p_follower import VEGA_BASE_VEL, VEGA_JOINTS
 from lerobot.utils.decorators import check_if_not_connected
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
@@ -90,8 +90,14 @@ class VegaExoJoycon(Teleoperator):
         """
         Creates a dictionary mapping the action feature key to the data type, i.e., describes the action feature schema.
             E.x. {"joint_keyname.pos": float ...}
+
+        When `with_chassis`, appends the base planar-velocity keys (base.vx/vy/wz) so the
+        schema matches the follower exactly.
         """
-        return {f"{joint}.pos": float for joints in self.components.values() for joint in joints}
+        features = {f"{joint}.pos": float for joints in self.components.values() for joint in joints}
+        if self.config.with_chassis:
+            features.update({name: float for name in VEGA_BASE_VEL})
+        return features
 
     @property
     def feedback_features(self) -> dict[str, type]:
@@ -276,6 +282,15 @@ class VegaExoJoycon(Teleoperator):
                     f"with_* flags describe different hardware."
                 )
             action.update({f"{name}.pos": float(value) for name, value in zip(names, pos, strict=True)})
+
+        if self.config.with_chassis:
+            # omniteleop only publishes components["chassis"] while the base is actively
+            # driven; its absence means "not moving", so default each axis to 0.0 rather
+            # than carrying the last value forward.
+            chassis = commanded.get("chassis", {}) or {}
+            action["base.vx"] = float(chassis.get("vx", 0.0))
+            action["base.vy"] = float(chassis.get("vy", 0.0))
+            action["base.wz"] = float(chassis.get("wz", 0.0))
 
         self._last_action = action
         return action

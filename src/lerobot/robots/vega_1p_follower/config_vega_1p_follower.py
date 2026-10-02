@@ -37,8 +37,10 @@ class Vega1PFollowerConfig(RobotConfig):
     with_head: bool = True
     with_torso: bool = True
 
-    # ***TBD
-    with_chassis: bool = False # Velocity controlled (instead of position). action_keys: base.v*, command: chassis.set_velocity().
+    # Velocity controlled (instead of position). Recorded action keys: base.vx/base.vy/base.wz;
+    # commanded (rollout only) via chassis.set_velocity(). Proprio (steer angles + wheel
+    # velocities) is added to observations when enabled.
+    with_chassis: bool = False
 
     # Sensors must also be enabled on the host side in the dexcontrol config files.
     with_head_camera_left_rgb: bool = True
@@ -46,12 +48,21 @@ class Vega1PFollowerConfig(RobotConfig):
     with_head_camera_depth: bool = True
     with_left_wrist_camera: bool = False
     with_right_wrist_camera: bool = False
+    # USB base (mobile-base surround) cameras. Declared in the dexbot_utils fork's
+    # Vega1pConfig.sensors; 640x480 RGB over zenoh. Off by default.
+    with_base_front_camera: bool = False
+    with_base_back_camera: bool = False
+    with_base_left_camera: bool = False
+    with_base_right_camera: bool = False
     with_head_imu: bool = True
 
     head_camera_height: int = 600
     head_camera_width: int = 960
     wrist_camera_height: int = 720
     wrist_camera_width: int = 1280
+    # Base USB cameras: measured 640x480 RGB on the live robot.
+    base_camera_height: int = 480
+    base_camera_width: int = 640
 
     # Max missed frames before considered disconnected.
     max_consecutive_stale_frames: int = 30

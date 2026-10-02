@@ -59,12 +59,35 @@ VEGA_CAMERAS: dict[str, tuple[str, str | None, int]] = {
     "head_camera_depth": ("head_camera", "depth", 1),
     "left_wrist_camera": ("left_wrist_camera", None, 3),
     "right_wrist_camera": ("right_wrist_camera", None, 3),
+    # USB surround cameras on the mobile base. Single-stream (stream=None, 3ch RGB),
+    # declared in the dexbot_utils fork's Vega1pConfig.sensors so connect()'s
+    # enable_sensor() loop resolves them like the wrist cams.
+    "base_front_camera": ("base_front_camera", None, 3),
+    "base_back_camera": ("base_back_camera", None, 3),
+    "base_left_camera": ("base_left_camera", None, 3),
+    "base_right_camera": ("base_right_camera", None, 3),
 }
 
 VEGA_IMU_FIELDS: list[tuple[str, int]] = [("ang_vel", 3), ("acc", 3), ("quat", 4)]
 
-# Chassis commanded by planar velocity instead of position.
-VEGA_BASE_VEL: list[str] = ["base.vx", "base.vy", "base.vtheta"]
+# Chassis commanded by planar velocity (set_velocity(vx, vy, wz)) instead of position.
+# These are the recorded ACTION keys; they match omniteleop + dexcontrol naming.
+VEGA_BASE_VEL: list[str] = ["base.vx", "base.vy", "base.wz"]
+
+# Chassis proprioception (OBSERVATION only): raw swerve readback -- 2 steer angles
+# (rad) + 2 wheel velocities (m/s), [left, right] order, straight from
+# chassis.steering_angle / chassis.wheel_velocity. No kinematics/odometry.
+VEGA_CHASSIS_STATE: list[str] = [
+    "base.steer_left",
+    "base.steer_right",
+    "base.wheel_vel_left",
+    "base.wheel_vel_right",
+]
+
+# Swerve joints the chassis reports (steer j1 then drive j2, left then right).
+# Used only as a connect-time hardware sanity check, like VEGA_JOINTS for the
+# position components.
+VEGA_CHASSIS_JOINTS: list[str] = ["L_wheel_j1", "R_wheel_j1", "L_wheel_j2", "R_wheel_j2"]
 
 class Vega1PFollower(Robot):
     """Dexmate Vega 1 Pro Follower with F5D6 Hands (5 Fingers, 6 DOF)."""
@@ -109,6 +132,8 @@ class Vega1PFollower(Robot):
         for key, (_, _, channels) in self.cameras.items():
             if key.startswith("head_camera"):
                 height, width = self.config.head_camera_height, self.config.head_camera_width
+            elif key.startswith("base_"):
+                height, width = self.config.base_camera_height, self.config.base_camera_width
             else:
                 height, width = self.config.wrist_camera_height, self.config.wrist_camera_width
             cam_fts[key] = (height, width, channels)
@@ -122,14 +147,26 @@ class Vega1PFollower(Robot):
         return [f"head_imu.{field}_{i}" for field, n in VEGA_IMU_FIELDS for i in range(n)]
 
     @property
+    def _chassis_state_features(self) -> dict[str, type]:
+        """Chassis proprioception keys (observation only), empty unless `with_chassis`."""
+        if not self.config.with_chassis:
+            return {}
+        return {name: float for name in VEGA_CHASSIS_STATE}
+
+    @property
     def action_features(self) -> dict[str, type]:
-        features = self._joint_features
-        # *** TBD: chassis
+        features = dict(self._joint_features)
+        if self.config.with_chassis:
+            # Base is velocity-commanded; action keys differ from the proprio keys.
+            features.update({name: float for name in VEGA_BASE_VEL})
         return features
 
     @property
     def observation_features(self) -> dict[str, Any]:
-        return {**self.action_features, **self.camera_features}
+        # Observation state = joint positions + chassis proprio (NOT the base velocity
+        # action keys, which have no direct readback). Chassis floats fold into
+        # observation.state alongside the joints via hw_to_dataset_features.
+        return {**self._joint_features, **self._chassis_state_features, **self.camera_features}
 
     @property
     def extra_dataset_features(self) -> dict[str, dict]:
@@ -193,6 +230,15 @@ class Vega1PFollower(Robot):
                 self._fail(
                     f"Joint-name mismatch for '{comp}'. VEGA_JOINTS declares {declared} but the robot "
                     f"reports {list(actual)}. Update VEGA_JOINTS to match the hardware."
+                )
+
+        if self.config.with_chassis:
+            actual = list(self.robot.chassis.joint_name)
+            if actual != VEGA_CHASSIS_JOINTS:
+                self._fail(
+                    f"Chassis joint-name mismatch. VEGA_CHASSIS_JOINTS declares {VEGA_CHASSIS_JOINTS} "
+                    f"but the robot reports {actual}. Update VEGA_CHASSIS_JOINTS (and the proprio "
+                    f"readback order) to match the hardware."
                 )
 
         self._check_sensors()
@@ -262,11 +308,18 @@ class Vega1PFollower(Robot):
         if self.robot is None:
             return
 
-        # if self.config.with_chassis and self.config.stop_base_on_disconnect:
-        #     try:
-        #         self.robot.chassis.set_velocity(0.0, 0.0, 0.0)
-        #     except Exception as err:  # a failed stop must not block teardown
-        #         logger.warning("Could not stop the chassis on disconnect: %s", err)
+        # Only this process writes the base during rollout; recording never does
+        # (use_external_commands short-circuits send_action). Guard so a failed stop
+        # never blocks teardown, and skip it when another process owns the hardware.
+        if (
+            self.config.with_chassis
+            and self.config.stop_base_on_disconnect
+            and not self.config.use_external_commands
+        ):
+            try:
+                self.robot.chassis.set_velocity(0.0, 0.0, 0.0)
+            except Exception as err:  # a failed stop must not block teardown
+                logger.warning("Could not stop the chassis on disconnect: %s", err)
 
         self.robot.shutdown()
         self.robot = None
@@ -281,7 +334,14 @@ class Vega1PFollower(Robot):
             pos = getattr(self.robot, comp).get_joint_pos_dict()
             state.update({f"{j}.pos": float(pos[j]) for j in joints})
 
-        # *** TBD: chassis
+        if self.config.with_chassis:
+            # Raw swerve readback: steering_angle/wheel_velocity are each (2,) = [left, right].
+            steer = np.asarray(self.robot.chassis.steering_angle, dtype=np.float32)
+            wheel = np.asarray(self.robot.chassis.wheel_velocity, dtype=np.float32)
+            state["base.steer_left"] = float(steer[0])
+            state["base.steer_right"] = float(steer[1])
+            state["base.wheel_vel_left"] = float(wheel[0])
+            state["base.wheel_vel_right"] = float(wheel[1])
 
         return state
 
@@ -376,11 +436,25 @@ class Vega1PFollower(Robot):
 
         goal_pos = {k: float(v) for k, v in action.items() if k.endswith(".pos")}
 
+        # Base velocity, clamped to the configured ceilings. Computed up front so it is
+        # echoed in the returned "sent" dict in BOTH modes -- the action key set then
+        # round-trips identically whether or not we actually command the base.
+        base_vel: dict[str, float] = {}
+        if self.config.with_chassis:
+            lin = self.config.max_base_linear_velocity
+            ang = self.config.max_base_angular_velocity
+            base_vel = {
+                "base.vx": float(np.clip(action.get("base.vx", 0.0), -lin, lin)),
+                "base.vy": float(np.clip(action.get("base.vy", 0.0), -lin, lin)),
+                "base.wz": float(np.clip(action.get("base.wz", 0.0), -ang, ang)),
+            }
+
         # Another process is driving (e.g. omniteleop's robot_controller). Everything
         # below only exists to build a command we would then throw away, and it costs a
-        # full joint read per component per step -- so stop here.
+        # full joint read per component per step -- so stop here. Base velocity is echoed
+        # but NOT sent: recording never drives the base from the follower.
         if self.config.use_external_commands:
-            return dict(goal_pos)
+            return {**goal_pos, **base_vel}
 
         if self.config.max_relative_target is not None:
             present = self._get_state()
@@ -399,14 +473,15 @@ class Vega1PFollower(Robot):
                 [goal_pos.get(f"{j}.pos", current[j]) for j in joints], dtype=np.float32
             )
 
-        sent: RobotAction = dict(goal_pos)
-
-        # *** TBD: chassis
+        sent: RobotAction = {**goal_pos, **base_vel}
 
         if joint_pos:
             self.robot.set_joint_pos(joint_pos)
 
-        if self.config.with_chassis: # ***TBD
-            pass
+        # Chassis is velocity-commanded and bypasses the position max_relative_target
+        # clamp. Reached only during rollout (use_external_commands returns above, so
+        # recording never drives the base from here). Missing keys default to a stop.
+        if self.config.with_chassis:
+            self.robot.chassis.set_velocity(base_vel["base.vx"], base_vel["base.vy"], base_vel["base.wz"])
 
         return sent

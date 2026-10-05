@@ -35,13 +35,13 @@ class VegaExoJoyconConfig(TeleoperatorConfig):
     with_right_hand: bool = False
     with_head: bool = True
     with_torso: bool = True
+    with_chassis: bool = True # Mobile base velocity (base.vx/vy/wz).
 
     # Zenoh topics, which can be found in the `topics` block of the active `omniteleop` config file (`src/omniteleop/configs/<ROBOT_CONFIG>.yaml`).
     # The `ROBOT_NAME` prefix is applied by DexComm, so the topic names stay relative.
     commands_topic: str = "robot/safe_commands" # Safety-validated commands sent to control the joints, used to create the LeRobot actions.
     joints_topic: str = "robot/joints" # Measured joint position feedback, used only the backfill missing component information.
 
-    # Extra namespace for the dexcomm Node. Empty means "just use ROBOT_NAME".
     # (Optional) extra namespace for the DexComm Node. Default (empty string, "") will just use `ROBOT_NAME`.
     namespace: str = ""
     

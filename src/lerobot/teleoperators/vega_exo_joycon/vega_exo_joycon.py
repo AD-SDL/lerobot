@@ -21,7 +21,11 @@ import time
 from typing import Any
 
 from lerobot.lerobot_types import RobotAction
+<<<<<<< HEAD
 from lerobot.robots.vega_1p_follower.vega_1p_follower import VEGA_JOINTS
+=======
+from lerobot.robots.vega_1p_follower.vega_1p_follower import VEGA_BASE_VEL, VEGA_JOINTS
+>>>>>>> 60bef1e1dc0b37e0816954a46a8933f1a0f30092
 from lerobot.utils.decorators import check_if_not_connected
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
@@ -90,16 +94,31 @@ class VegaExoJoycon(Teleoperator):
         """
         Creates a dictionary mapping the action feature key to the data type, i.e., describes the action feature schema.
             E.x. {"joint_keyname.pos": float ...}
+<<<<<<< HEAD
         """
         return {f"{joint}.pos": float for joints in self.components.values() for joint in joints}
+=======
+
+        When `with_chassis`, appends the base planar-velocity keys (base.vx/vy/wz).
+        """
+        features = {f"{joint}.pos": float for joints in self.components.values() for joint in joints}
+        if self.config.with_chassis:
+            features.update({name: float for name in VEGA_BASE_VEL})
+        return features
+>>>>>>> 60bef1e1dc0b37e0816954a46a8933f1a0f30092
 
     @property
     def feedback_features(self) -> dict[str, type]:
         """
         Creates a dictionary mapping the feedback feature key to the data type, i.e., describes the feedback feature schema.
             
+<<<<<<< HEAD
             Property is required by LeRobot but is a no-op for this teleoperator, since LeRobot is just reading commands from omniteleop and recording them as RobotActions,
             and not actually actuating anything.
+=======
+        Property is required by LeRobot but is a no-op for this teleoperator, since LeRobot is just reading commands from omniteleop and recording them as RobotActions,
+        and not actually actuating anything.
+>>>>>>> 60bef1e1dc0b37e0816954a46a8933f1a0f30092
         """
         return {}
 
@@ -119,7 +138,11 @@ class VegaExoJoycon(Teleoperator):
         Returns the difference in seconds between now and the last stored message from `robot/safe_commands`, 
         or infinity if no previous command. 
         
+<<<<<<< HEAD
             Ensures that DexComm is continually publishing to its subscribers.
+=======
+        Ensures that DexComm is continually publishing to its subscribers.
+>>>>>>> 60bef1e1dc0b37e0816954a46a8933f1a0f30092
         """
         with self._lock:
             if self._command is None:
@@ -277,6 +300,17 @@ class VegaExoJoycon(Teleoperator):
                 )
             action.update({f"{name}.pos": float(value) for name, value in zip(names, pos, strict=True)})
 
+<<<<<<< HEAD
+=======
+        # Command only includes components["chassis"] while actively driving (absent means idle), 
+        # so default each axis to 0.0 (no velocity) rather than continue with the last value (would keep moving the robot).
+        if self.config.with_chassis:
+            chassis = commanded.get("chassis", {}) or {}
+            action["base.vx"] = float(chassis.get("vx", 0.0))
+            action["base.vy"] = float(chassis.get("vy", 0.0))
+            action["base.wz"] = float(chassis.get("wz", 0.0))
+
+>>>>>>> 60bef1e1dc0b37e0816954a46a8933f1a0f30092
         self._last_action = action
         return action
 

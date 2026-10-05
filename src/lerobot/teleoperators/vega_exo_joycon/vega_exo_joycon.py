@@ -91,8 +91,7 @@ class VegaExoJoycon(Teleoperator):
         Creates a dictionary mapping the action feature key to the data type, i.e., describes the action feature schema.
             E.x. {"joint_keyname.pos": float ...}
 
-        When `with_chassis`, appends the base planar-velocity keys (base.vx/vy/wz) so the
-        schema matches the follower exactly.
+        When `with_chassis`, appends the base planar-velocity keys (base.vx/vy/wz).
         """
         features = {f"{joint}.pos": float for joints in self.components.values() for joint in joints}
         if self.config.with_chassis:
@@ -104,8 +103,8 @@ class VegaExoJoycon(Teleoperator):
         """
         Creates a dictionary mapping the feedback feature key to the data type, i.e., describes the feedback feature schema.
             
-            Property is required by LeRobot but is a no-op for this teleoperator, since LeRobot is just reading commands from omniteleop and recording them as RobotActions,
-            and not actually actuating anything.
+        Property is required by LeRobot but is a no-op for this teleoperator, since LeRobot is just reading commands from omniteleop and recording them as RobotActions,
+        and not actually actuating anything.
         """
         return {}
 
@@ -125,7 +124,7 @@ class VegaExoJoycon(Teleoperator):
         Returns the difference in seconds between now and the last stored message from `robot/safe_commands`, 
         or infinity if no previous command. 
         
-            Ensures that DexComm is continually publishing to its subscribers.
+        Ensures that DexComm is continually publishing to its subscribers.
         """
         with self._lock:
             if self._command is None:
@@ -283,10 +282,9 @@ class VegaExoJoycon(Teleoperator):
                 )
             action.update({f"{name}.pos": float(value) for name, value in zip(names, pos, strict=True)})
 
+        # Command only includes components["chassis"] while actively driving (absent means idle), 
+        # so default each axis to 0.0 (no velocity) rather than continue with the last value (would keep moving the robot).
         if self.config.with_chassis:
-            # omniteleop only publishes components["chassis"] while the base is actively
-            # driven; its absence means "not moving", so default each axis to 0.0 rather
-            # than carrying the last value forward.
             chassis = commanded.get("chassis", {}) or {}
             action["base.vx"] = float(chassis.get("vx", 0.0))
             action["base.vy"] = float(chassis.get("vy", 0.0))

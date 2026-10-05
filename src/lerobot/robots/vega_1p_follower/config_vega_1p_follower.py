@@ -32,15 +32,15 @@ class Vega1PFollowerConfig(RobotConfig):
     # with each other regardless of actual hardware.
     with_left_arm: bool = True
     with_right_arm: bool = True
-    with_left_hand: bool = True
-    with_right_hand: bool = True
+    with_left_hand: bool = False # ***10/01/2026: *_f5d6 ROBOT_CONFIG uses hands, but hands currently ERRORing, so temp. disabled.
+    with_right_hand: bool = False
     with_head: bool = True
     with_torso: bool = True
 
     # Velocity controlled (instead of position). Recorded action keys: base.vx/base.vy/base.wz;
     # commanded (rollout only) via chassis.set_velocity(). Proprio (steer angles + wheel
     # velocities) is added to observations when enabled.
-    with_chassis: bool = False
+    with_chassis: bool = True
 
     # Sensors must also be enabled on the host side in the dexcontrol config files.
     with_head_camera_left_rgb: bool = True
@@ -50,8 +50,8 @@ class Vega1PFollowerConfig(RobotConfig):
     with_right_wrist_camera: bool = False
     # USB base (mobile-base surround) cameras. Declared in the dexbot_utils fork's
     # Vega1pConfig.sensors; 640x480 RGB over zenoh. Off by default.
-    with_base_front_camera: bool = False
-    with_base_back_camera: bool = False
+    with_base_front_camera: bool = True
+    with_base_back_camera: bool = True
     with_base_left_camera: bool = False
     with_base_right_camera: bool = False
     with_head_imu: bool = True

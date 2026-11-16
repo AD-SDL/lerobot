@@ -71,10 +71,19 @@ class VegaExoJoycon(Teleoperator):
 
         self.config = config
 
-        VEGA_JOINTS |= VEGA_GRIPPERS if self.config.with_left_gripper and not self.config.with_left_hand else VEGA_HANDS
+        # Build a fresh per-instance joint map; never |= onto the imported VEGA_JOINTS
+        # (that both makes it local -> UnboundLocalError on the RHS read, and mutates
+        # the follower's shared global in place). Grippers replace hands only when
+        # grippers are on and hands are off; otherwise use the hand joints.
+        hand_or_gripper = (
+            VEGA_GRIPPERS
+            if self.config.with_left_gripper and not self.config.with_left_hand
+            else VEGA_HANDS
+        )
+        vega_joints = {**VEGA_JOINTS, **hand_or_gripper}
 
         self.components: dict[str, list[str]] = {
-            comp: joints for comp, joints in VEGA_JOINTS.items() if getattr(config, f"with_{comp}")
+            comp: joints for comp, joints in vega_joints.items() if getattr(config, f"with_{comp}")
         }
 
         self._node: Any | None = None

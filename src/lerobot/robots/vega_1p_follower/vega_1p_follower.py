@@ -49,8 +49,16 @@ VEGA_JOINTS: dict[str, list[str]] = {
     "right_arm": [f"R_arm_j{i}" for i in range(1, 8)],
     "head": [f"head_j{i}" for i in range(1, 4)],
     "torso": [f"torso_j{i}" for i in range(1, 4)],
+}
+
+VEGA_HANDS: dict[str, list[str]] = {
     "left_hand": [f"L_{VEGA_FINGERS[i]}_j1" for i in range(5)] + ["L_th_j0"],
-    "right_hand": [f"R_{VEGA_FINGERS[i]}_j1" for i in range(5)] + ["R_th_j0"],
+    "right_hand": [f"R_{VEGA_FINGERS[i]}_j1" for i in range(5)] + ["R_th_j0"],   
+}
+
+VEGA_GRIPPERS: dict[str, list[str]] = {
+    "left_hand": [f"L_gripper_j1"],
+    "right_hand": [f"R_gripper_j1"],   
 }
 
 VEGA_CAMERAS: dict[str, tuple[str, str | None, int]] = {
@@ -100,6 +108,8 @@ class Vega1PFollower(Robot):
 
         self.config = config
         self.robot: DexRobot | None = None
+
+        VEGA_JOINTS |= VEGA_GRIPPERS if self.config.with_left_gripper and not self.config.with_left_hand else VEGA_HANDS
 
         self.components: dict[str, list[str]] = {
             comp: joints

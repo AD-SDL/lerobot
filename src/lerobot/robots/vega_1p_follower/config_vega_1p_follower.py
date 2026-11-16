@@ -40,6 +40,8 @@ class Vega1PFollowerConfig(RobotConfig):
     with_right_arm: bool = True
     with_left_hand: bool = False # ***10/01/2026: *_f5d6 ROBOT_CONFIG uses hands, but hands currently ERRORing, so temp. disabled.
     with_right_hand: bool = False
+    with_right_gripper: bool = True # ***11/16/2026: Changed default launch ROBOT_CONFIG to *_gripper while hands being repaired.
+    with_left_gripper: bool = True
     with_head: bool = True
     with_torso: bool = True
 

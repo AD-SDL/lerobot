@@ -21,7 +21,7 @@ import time
 from typing import Any
 
 from lerobot.lerobot_types import RobotAction
-from lerobot.robots.vega_1p_follower.vega_1p_follower import VEGA_BASE_VEL, VEGA_JOINTS
+from lerobot.robots.vega_1p_follower.vega_1p_follower import VEGA_BASE_VEL, VEGA_JOINTS, VEGA_HANDS, VEGA_GRIPPERS
 from lerobot.utils.decorators import check_if_not_connected
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
@@ -70,6 +70,8 @@ class VegaExoJoycon(Teleoperator):
         super().__init__(config)
 
         self.config = config
+
+        VEGA_JOINTS |= VEGA_GRIPPERS if self.config.with_left_gripper and not self.config.with_left_hand else VEGA_HANDS
 
         self.components: dict[str, list[str]] = {
             comp: joints for comp, joints in VEGA_JOINTS.items() if getattr(config, f"with_{comp}")

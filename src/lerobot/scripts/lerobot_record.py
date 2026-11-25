@@ -90,6 +90,7 @@ lerobot-record \\
 """
 
 import logging
+import sys
 import time
 from dataclasses import asdict, dataclass
 from pprint import pformat
@@ -441,6 +442,10 @@ def record(
 
     dataset = None
     listener = None
+    # Pre-init so it is always bound after the try (the init_*_listener call inside the
+    # try reassigns it). Lets the operator-stop check before `return dataset` run even if
+    # setup raised before the listener was created.
+    events = {"exit_early": False, "rerecord_episode": False, "stop_recording": False}
 
     try:
         if cfg.resume:
@@ -588,6 +593,14 @@ def record(
                 logging.warning("No episodes saved — skipping push to hub")
 
         log_say("Exiting", cfg.play_sounds)
+
+    # Operator-stop sentinel: when the run ended because the operator pressed stop (JoyCon
+    # or Esc), exit 42 so a chunked caller (vega_module _jetson_record_common.sh) can tell
+    # "operator is done -> end the whole session" apart from "this chunk completed" (exit 0)
+    # and from a crash (other non-zero). The finally above has already finalized the dataset,
+    # so the in-progress chunk is saved before this exit. 42 is unambiguous vs 0 / 1 / 130.
+    if events["stop_recording"]:
+        sys.exit(42)
     return dataset
 
 

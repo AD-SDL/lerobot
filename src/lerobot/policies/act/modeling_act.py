@@ -474,6 +474,13 @@ class ACT(nn.Module):
             # NOTE: If modifying this section, verify on MPS devices that
             # gradients remain stable (no explosions or NaNs).
             for img in batch[OBS_IMAGES]:
+                # 1-channel depth maps (e.g. head_camera_depth) are fed through the SAME
+                # shared ResNet as the RGB cams, whose stem is Conv2d(3, ...). Expand the
+                # single (already-normalized) channel to 3 so the pretrained stem accepts
+                # it. expand() is a view (no copy); guarded on channel==1 so RGB cams are
+                # untouched. Lets depth be trained instead of crashing the backbone.
+                if img.shape[1] == 1:
+                    img = img.expand(-1, 3, -1, -1)
                 cam_features = self.backbone(img)["feature_map"]
                 cam_pos_embed = self.encoder_cam_feat_pos_embed(cam_features).to(dtype=cam_features.dtype)
                 cam_features = self.encoder_img_feat_input_proj(cam_features)
